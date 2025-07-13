@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.scene.control.*?>
+<?import javafx.scene.layout.*?>
+<?import javafx.geometry.Insets?>
+<?import org.example.windirtrash.view.TreemapPane?>
+
+<BorderPane fx:id="root"
+            xmlns:fx="http://javafx.com/fxml"
+            fx:controller="org.example.windirtrash.controller.MainController">
+
+    <!-- ────────── Barra de menús ────────── -->
+    <top>
+        <MenuBar>
+            <Menu text="Archivo">
+                <MenuItem text="Salir" onAction="#onSalir"/>
+            </Menu>
+            <Menu text="Acciones">
+                <MenuItem text="Escanear…" onAction="#onEscanear"/>
+                <MenuItem text="Limpiar seleccionados" onAction="#onLimpiar"/>
+            </Menu>
+            <Menu text="Ayuda">
+                <MenuItem text="Acerca de…" onAction="#onAcercaDe"/>
+            </Menu>
+        </MenuBar>
+    </top>
+
+    <!-- ────────── Centro: placeholder + resultados ────────── -->
+    <center>
+        <StackPane>
+
+            <!-- Placeholder (botón grande) -->
+            <VBox fx:id="placeholderBox" alignment="CENTER" spacing="10">
+                <Label text="Pulsa Escanear para comenzar"/>
+                <Button text="Escanear" onAction="#onEscanear"/>
+            </VBox>
+
+            <!-- SplitPane con árbol + treemap (inicialmente oculto) -->
+            <SplitPane fx:id="mainSplit"
+                       orientation="VERTICAL"
+                       dividerPositions="0.55"
+                       visible="false">
+                <TreeView fx:id="treeView"/>
+                <TreemapPane fx:id="treemapPane" minHeight="150"/>
+            </SplitPane>
+
+        </StackPane>
+    </center>
+
+    <!-- ────────── Barra de estado ────────── -->
+    <bottom>
+        <HBox spacing="8">
+            <padding>
+                <Insets top="6" right="6" bottom="6" left="6"/>
+            </padding>
+            <Label fx:id="statusLabel" text="Listo."/>
+            <ProgressBar fx:id="progressBar" prefWidth="150" visible="false"/>
+        </HBox>
+    </bottom>
+</BorderPane>
