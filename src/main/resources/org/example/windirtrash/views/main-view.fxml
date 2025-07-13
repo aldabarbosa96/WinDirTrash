@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.scene.control.*?>
+<?import javafx.scene.layout.*?>
+<?import javafx.geometry.Insets?>
+
+<BorderPane fx:id="root"
+            xmlns:fx="http://javafx.com/fxml"
+            fx:controller="org.example.windirtrash.controller.MainController">
+
+    <!-- ——— Barra de menús ——— -->
+    <top>
+        <MenuBar>
+            <Menu text="Archivo">
+                <MenuItem text="Salir" onAction="#onSalir"/>
+            </Menu>
+            <Menu text="Acciones">
+                <MenuItem text="Escanear…" onAction="#onEscanear"/>
+                <MenuItem text="Limpiar seleccionados" onAction="#onLimpiar"/>
+            </Menu>
+            <Menu text="Ayuda">
+                <MenuItem text="Acerca de…" onAction="#onAcercaDe"/>
+            </Menu>
+        </MenuBar>
+    </top>
+
+
+    <!-- ——— Zona central: árbol + visualización ——— -->
+    <center>
+        <StackPane>
+            <TreeView fx:id="treeView"/>
+            <Label fx:id="emptyLabel"
+                   text="Sin datos. Pulsa Escanear…"
+                   style="-fx-text-fill: #888;"/>
+        </StackPane>
+    </center>
+
+    <!-- ——— Barra de estado ——— -->
+    <bottom>
+        <HBox spacing="8">
+            <padding>
+                <Insets top="6" right="6" bottom="6" left="6"/>
+            </padding>
+
+            <Label fx:id="statusLabel" text="Listo."/>
+            <ProgressBar fx:id="progressBar" prefWidth="150" visible="false"/>
+        </HBox>
+    </bottom>
+
+    <!-- Margen interior general -->
+    <padding>
+        <Insets top="0" right="0" bottom="0" left="0"/>
+    </padding>
+</BorderPane>
