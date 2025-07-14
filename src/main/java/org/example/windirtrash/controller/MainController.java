@@ -8,6 +8,7 @@ import javafx.scene.layout.VBox;
 import javafx.stage.Stage;
 import org.example.windirtrash.model.FileNode;
 import org.example.windirtrash.task.FileScannerTask;
+import org.example.windirtrash.utils.CategoryInfo;
 import org.example.windirtrash.view.TreemapPane;
 
 import java.awt.Desktop;
@@ -44,19 +45,39 @@ public class MainController {
         placeholderBox.managedProperty().bind(placeholderBox.visibleProperty());
         mainSplit.managedProperty().bind(mainSplit.visibleProperty());
 
-        treeView.setCellFactory(tv -> new TreeCell<>() {
-            @Override
-            protected void updateItem(String t, boolean empty) {
-                super.updateItem(t, empty);
-                if (empty || t == null) {
-                    setText(null);
-                    setStyle("");
-                } else {
-                    setText(t);
-                    setStyle(getTreeItem().isLeaf() ? "-fx-text-fill: crimson;" : "");
+        treeView.setCellFactory(tv -> {
+            // Tooltip único por celda
+            Tooltip tt = new Tooltip();
+            TreeCell<String> cell = new TreeCell<>() {
+                @Override
+                protected void updateItem(String item, boolean empty) {
+                    super.updateItem(item, empty);
+
+                    if (empty || item == null) {            // celda vacía
+                        setText(null);
+                        setTooltip(null);
+                        setStyle("");
+                        return;
+                    }
+
+                    setText(item);
+
+                    /* ----- categorías (no-leaf) ----- */
+                    if (!getTreeItem().isLeaf()) {
+                        String cat = item.contains(" (") ? item.substring(0, item.indexOf(" (")) : item;
+                        tt.setText(CategoryInfo.DESC.getOrDefault(cat, "Sin descripción."));
+                        setTooltip(tt);
+                        setStyle("");
+                    } else {
+                        setTooltip(null);
+                        setStyle("-fx-text-fill: crimson;");
+                    }
                 }
-            }
+            };
+            return cell;
         });
+
+
 
         /* menú contextual */
         MenuItem miDel = new MenuItem("Eliminar seleccionado");

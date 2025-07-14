@@ -8,6 +8,7 @@ import javafx.scene.layout.Pane;
 import javafx.scene.paint.Color;
 import javafx.util.Duration;
 import org.example.windirtrash.model.FileNode;
+import org.example.windirtrash.utils.CategoryInfo;
 
 import java.awt.Desktop;
 import java.io.File;
@@ -137,7 +138,8 @@ public class TreemapPane extends Pane {
     private void onMove(MouseEvent e) {
         for (Rect r : rects)
             if (r.contains(e.getX(), e.getY())) {
-                tip.setText(r.n.getFile().getAbsolutePath() + "\n" + FileNode.convertToHumanReadable(r.n.getSize()));
+                tip.setText(r.n.getFile().getAbsolutePath() + "\n" + FileNode.convertToHumanReadable(r.n.getSize()) + "\n\n" + CategoryInfo.DESC.getOrDefault(r.n.getCategory(), ""));
+
                 Tooltip.install(canvas, tip);
                 tip.setShowDelay(Duration.millis(40));
                 return;
