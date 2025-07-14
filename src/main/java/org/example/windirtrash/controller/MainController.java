@@ -1,5 +1,6 @@
 package org.example.windirtrash.controller;
 
+import javafx.application.Platform;
 import javafx.fxml.FXML;
 import javafx.scene.control.*;
 import javafx.scene.image.Image;
@@ -22,9 +23,13 @@ import java.nio.file.*;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.*;
 
+/**
+ * Controlador principal – selector de unidad, árbol por **categorías**
+ * y treemap sincronizado (estilo WinDirStat).
+ */
 public class MainController {
 
-    /* ─── UI ──────────────────────────────────────────────────────────── */
+    /* ──────────────────────────── FXML ──────────────────────────── */
     @FXML
     private TreeView<String> treeView;
     @FXML
@@ -46,19 +51,19 @@ public class MainController {
     @FXML
     private HBox topBar;
 
+    /* Índice categoría → TreeItem (para saltar rápido) */
     private final Map<String, TreeItem<String>> catItems = new HashMap<>();
 
-    /* ------------------------------------------------------------------------- */
-    /*  initialize()                                                             */
-    /* ------------------------------------------------------------------------- */
+    /* ============================================================= */
+    /*  initialize()                                                 */
+    /* ============================================================= */
     @FXML
     private void initialize() {
 
-        /* ---------- 1) poblar lista de unidades / montajes ---------- */
-        driveChoice.getItems().setAll(File.listRoots());           // C:\, D:\, / …
+        /* 1‒ Selector de unidades ------------------------------------ */
+        driveChoice.getItems().setAll(File.listRoots());
         if (!driveChoice.getItems().isEmpty()) driveChoice.getSelectionModel().selectFirst();
 
-        // Texto amigable "C:\  (120 GB libres de 237 GB)"
         driveChoice.setConverter(new StringConverter<>() {
             @Override
             public String toString(File f) {
@@ -72,53 +77,50 @@ public class MainController {
                 return null;
             }
         });
-
-        // Desactivar botón si no hay selección
         scanBtn.disableProperty().bind(driveChoice.getSelectionModel().selectedItemProperty().isNull());
 
-        /* ---------- 2) configuración de la UI existente ------------- */
+        /* 2‒ Estado inicial de paneles ------------------------------- */
         progressBar.setVisible(false);
         statusLabel.setText("Listo.");
         mainSplit.setVisible(false);
         placeholderBox.managedProperty().bind(placeholderBox.visibleProperty());
         mainSplit.managedProperty().bind(mainSplit.visibleProperty());
 
-        /* TreeView con iconos de riesgo (sin cambios) */
+        /* 3‒ TreeView con icono de riesgo ---------------------------- */
         treeView.setCellFactory(tv -> {
-            Image imgSafe = new Image(Objects.requireNonNull(MainApp.class.getResource("/org/example/windirtrash/icons/good.png")).toExternalForm(), 16, 16, true, true);
-            Image imgRisk = new Image(Objects.requireNonNull(MainApp.class.getResource("/org/example/windirtrash/icons/risk.png")).toExternalForm(), 16, 16, true, true);
-            ImageView ivSafe = new ImageView(imgSafe);
-            ImageView ivRisk = new ImageView(imgRisk);
-
+            Image imgSafe = new Image(MainApp.class.getResource("/org/example/windirtrash/icons/good.png").toExternalForm(), 16, 16, true, true);
+            Image imgRisk = new Image(MainApp.class.getResource("/org/example/windirtrash/icons/risk.png").toExternalForm(), 16, 16, true, true);
+            ImageView ivSafe = new ImageView(imgSafe), ivRisk = new ImageView(imgRisk);
             Tooltip tt = new Tooltip();
+
             return new TreeCell<>() {
                 @Override
                 protected void updateItem(String item, boolean empty) {
                     super.updateItem(item, empty);
                     if (empty || item == null) {
                         setText(null);
-                        setTooltip(null);
                         setGraphic(null);
+                        setTooltip(null);
                         setStyle("");
                         return;
                     }
                     setText(item);
-                    if (!getTreeItem().isLeaf()) {
+                    if (!getTreeItem().isLeaf()) {           // categoría
                         String cat = item.split(" \\(")[0];
                         var meta = CategoryInfo.get(cat);
                         tt.setText(meta.desc());
                         setTooltip(tt);
                         setGraphic(meta.risk() == CategoryInfo.Risk.SAFE ? ivSafe : ivRisk);
-                    } else {
-                        setTooltip(null);
+                    } else {                                  // archivo
                         setGraphic(null);
+                        setTooltip(null);
                         setStyle("-fx-text-fill: crimson;");
                     }
                 }
             };
         });
 
-        /* Menú contextual eliminar ------------------------------ */
+        /* 4‒ Menú contextual eliminar -------------------------------- */
         MenuItem miDel = new MenuItem("Eliminar seleccionado");
         MenuItem miCat = new MenuItem("Eliminar categoría completa");
         miDel.setOnAction(e -> deleteSelected(false));
@@ -130,9 +132,29 @@ public class MainController {
                 ctx.show(treeView, e.getScreenX(), e.getScreenY());
             else ctx.hide();
         });
+
+        /* 5‒ Sincronía Treemap ↔ TreeView --------------------------- */
+        treemapPane.setOnCategoryClicked(cat -> {
+            TreeItem<String> ti = catItems.get(cat);
+            if (ti != null) {
+                treeView.getSelectionModel().select(ti);
+                treeView.scrollTo(treeView.getRow(ti));
+            }
+        });
+
+        treeView.getSelectionModel().selectedItemProperty().addListener((ob, o, n) -> {
+            if (n == null) {
+                treemapPane.setHighlightCategory(null);
+                return;
+            }
+            String cat = n.isLeaf() ? n.getParent().getValue().split(" \\(")[0] : n.getValue().split(" \\(")[0];
+            treemapPane.setHighlightCategory(cat);
+        });
     }
 
-    /* ─── menú superior ──────────────────────────────────────────────── */
+    /* ============================================================= */
+    /*  Menú “Archivo / Ayuda”                                       */
+    /* ============================================================= */
     @FXML
     private void onSalir() {
         ((Stage) treeView.getScene().getWindow()).close();
@@ -140,18 +162,19 @@ public class MainController {
 
     @FXML
     private void onAcercaDe() {
-        new Alert(Alert.AlertType.INFORMATION, "WindirTrash v0.1\nDesarrollado por Manito").showAndWait();
+        new Alert(Alert.AlertType.INFORMATION, "WinDirTrash v0.1\nDesarrollado por Manito").showAndWait();
     }
 
-    /* ------------------------------------------------------------------------- */
-    /*  onEscanear()                                                             */
-    /* ------------------------------------------------------------------------- */
+    /* ============================================================= */
+    /*  Escaneo                                                      */
+    /* ============================================================= */
     @FXML
     private void onEscanear() {
 
         File selDrive = driveChoice.getValue();
         if (selDrive == null) return;
 
+        /* mover selector arriba la 1ª vez */
         if (!topBar.getChildren().contains(driveBar)) {
             placeholderBox.getChildren().remove(driveBar);
             topBar.getChildren().add(driveBar);
@@ -159,40 +182,47 @@ public class MainController {
             topBar.setManaged(true);
         }
 
-        /* Advertencia si escanea la raíz completa (puede tardar) */
+        /* advertencia si es unidad raíz */
         if (selDrive.toPath().getParent() == null) {
-            Alert warn = new Alert(Alert.AlertType.CONFIRMATION, "Escanear toda la unidad " + selDrive.getPath() + " puede tardar bastante y requerir permisos.\n¿Deseas continuar?");
-            warn.getButtonTypes().setAll(ButtonType.OK, ButtonType.CANCEL);
-            if (warn.showAndWait().orElse(ButtonType.CANCEL) == ButtonType.CANCEL) return;
+            Alert w = new Alert(Alert.AlertType.CONFIRMATION, "Escanear toda la unidad " + selDrive.getPath() + " puede tardar bastante y requerir permisos.\n¿Continuar?");
+            w.getButtonTypes().setAll(ButtonType.OK, ButtonType.CANCEL);
+            if (w.showAndWait().orElse(ButtonType.CANCEL) == ButtonType.CANCEL) return;
         }
 
-        /* Preparar UI ----------------------------------------------------- */
+        /* preparar UI */
         placeholderBox.setVisible(false);
         mainSplit.setVisible(true);
+        Platform.runLater(() -> mainSplit.setDividerPositions(0.55));
 
         catItems.clear();
+        treemapPane.setRoot(null);
+        treemapPane.setHighlightCategory(null);
+
+        /* ▲ crear raíz para evitar NPE en addJunkToUI() */
         TreeItem<String> rootTI = new TreeItem<>("Basura encontrada");
         rootTI.setExpanded(true);
         treeView.setRoot(rootTI);
         treeView.setShowRoot(false);
 
-        /* Lanzar tarea de escaneo en la unidad elegida -------------------- */
-        Path rootPath = selDrive.toPath();
-        FileScannerTask task = new FileScannerTask(rootPath, this::addJunkToUI);
+        /* tarea de escaneo */
+        FileScannerTask task = new FileScannerTask(selDrive.toPath(), this::addJunkToUI);
 
         progressBar.progressProperty().bind(task.progressProperty());
         progressBar.setVisible(true);
         statusLabel.textProperty().bind(task.messageProperty());
 
         task.setOnSucceeded(e -> {
+            FileNode rootNode = task.getValue();
+
+            // ← dejamos que el layout termine y luego pintamos
+            Platform.runLater(() -> treemapPane.setRoot(rootNode));
+
             finishScan("Escaneo completado");
-            treemapPane.setRoot(task.getValue());            // solo una vez
         });
         task.setOnFailed(e -> finishScan("Error: " + task.getException().getMessage()));
 
         new Thread(task, "scan").start();
     }
-
 
     private void finishScan(String msg) {
         progressBar.progressProperty().unbind();
@@ -200,12 +230,13 @@ public class MainController {
         statusLabel.textProperty().unbind();
         statusLabel.setText(msg);
 
-        if (treeView.getRoot().getChildren().isEmpty()) {
+        if (treeView.getRoot() != null && treeView.getRoot().getChildren().isEmpty()) {
+            /* sin basura encontrada */
             treeView.setRoot(null);
             mainSplit.setVisible(false);
             placeholderBox.setVisible(true);
-        }
-        if (treeView.getRoot() == null) {
+            treemapPane.setRoot(null);
+
             topBar.getChildren().remove(driveBar);
             placeholderBox.getChildren().add(driveBar);
             topBar.setVisible(false);
@@ -213,95 +244,66 @@ public class MainController {
         }
     }
 
-    /* inserción incremental SOLO al árbol (ya no al treemap) */
+    /* ============================================================= */
+    /*  Árbol incremental por categorías                             */
+    /* ============================================================= */
     private void addJunkToUI(FileNode n) {
         String cat = n.getCategory() == null ? "Otros" : n.getCategory();
+
         TreeItem<String> catItem = catItems.computeIfAbsent(cat, c -> {
             TreeItem<String> ti = new TreeItem<>(c);
             treeView.getRoot().getChildren().add(ti);
             return ti;
         });
 
-        String label = n.getFile().getAbsolutePath() + " (" + FileNode.convertToHumanReadable(n.getSize()) + ")";
+        String label = n.getFile().getAbsolutePath() + " (" + FileNode.convertToHumanReadable(n.getSize()) + ')';
         catItem.getChildren().add(new TreeItem<>(label));
 
         long total = catItem.getChildren().stream().map(TreeItem::getValue).mapToLong(this::bytesFromDisplay).sum();
-        catItem.setValue(cat + " (" + FileNode.convertToHumanReadable(total) + ")");
+        catItem.setValue(cat + " (" + FileNode.convertToHumanReadable(total) + ')');
     }
 
-    private long bytesFromDisplay(String disp) {
-        int i1 = disp.lastIndexOf('('), i2 = disp.lastIndexOf(')');
-        if (i1 < 0 || i2 < 0) return 0;
-        String[] p = disp.substring(i1 + 1, i2).split(" ");
-        double v = Double.parseDouble(p[0].replace(',', '.'));
-        return switch (p[1]) {
-            case "KB" -> (long) (v * 1024);
-            case "MB" -> (long) (v * 1024 * 1024);
-            case "GB" -> (long) (v * 1024 * 1024 * 1024);
-            case "TB" -> (long) (v * 1024L * 1024 * 1024 * 1024);
-            default -> (long) v;
-        };
-    }
-
-    /* ─── Eliminación / Papelera (sin cambios de lógica) ─────────────── */
+    /* ============================================================= */
+    /*  Eliminación                                                  */
+    /* ============================================================= */
     @FXML
     private void onLimpiar() {
         deleteSelected(false);
     }
 
     private void deleteSelected(boolean whole) {
-
-        /* 1. Selección -------------------------------------------------------- */
         TreeItem<String> sel = treeView.getSelectionModel().getSelectedItem();
         if (sel == null) return;
 
-        /* 2. Construir lista de rutas a eliminar ----------------------------- */
         List<Path> tgt = new ArrayList<>();
-        if (whole && !sel.isLeaf()) {
-            // categoría completa
-            sel.getChildren().forEach(c -> tgt.add(extractPath(c.getValue())));
-        } else if (sel.isLeaf()) {
-            // archivo individual
-            tgt.add(extractPath(sel.getValue()));
-        } else {
+        if (whole && !sel.isLeaf()) sel.getChildren().forEach(c -> tgt.add(extractPath(c.getValue())));
+        else if (sel.isLeaf()) tgt.add(extractPath(sel.getValue()));
+        else {
             statusLabel.setText("Selecciona un archivo o categoría.");
             return;
         }
 
-        /* 3. ¿Hay algo que convenga revisar? --------------------------------- */
-        // Averiguamos las categorías implicadas
-        Set<String> cats = new HashSet<>();
-        if (whole && !sel.isLeaf()) {
-            cats.add(sel.getValue());                     // la propia categoría
-        } else {
-            cats.add(sel.getParent().getValue());         // padre del archivo
-        }
-        boolean anyReview = cats.stream().map(lbl -> lbl.split(" \\(")[0])         // quitar “ (10 MB)”
-                .anyMatch(c -> CategoryInfo.get(c).risk() == CategoryInfo.Risk.REVIEW);
+        /* aviso de seguridad --------------------------------------- */
+        String cat = sel.isLeaf() ? sel.getParent().getValue().split(" \\(")[0] : sel.getValue().split(" \\(")[0];
+        boolean review = CategoryInfo.get(cat).risk() == CategoryInfo.Risk.REVIEW;
 
-        /* 4. Diálogo de confirmación ----------------------------------------- */
         Alert dlg = new Alert(Alert.AlertType.CONFIRMATION);
-        dlg.setHeaderText(anyReview ? "⚠️ Hay elementos que conviene revisar antes de borrar." : "✅ Los elementos seleccionados son seguros de borrar.");
+        dlg.setHeaderText(review ? "⚠️ Hay elementos que conviene revisar antes de borrar." : "✅ Los elementos seleccionados son seguros de borrar.");
         dlg.setContentText("Mover a Papelera permite recuperar.\nEliminar borra definitivamente.");
 
-        ButtonType btTrash = new ButtonType("Mover a Papelera");
-        ButtonType btDel = new ButtonType("Eliminar");
+        ButtonType btTrash = new ButtonType("Mover a Papelera"), btDel = new ButtonType("Eliminar");
         dlg.getButtonTypes().setAll(btTrash, btDel, ButtonType.CANCEL);
-
         ButtonType choice = dlg.showAndWait().orElse(ButtonType.CANCEL);
         if (choice == ButtonType.CANCEL) return;
 
-        /* 5. Papelera vs eliminación permanente ------------------------------ */
         boolean toTrash = choice == btTrash;
         boolean trashOK = Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.MOVE_TO_TRASH);
-
         if (toTrash && !trashOK) {
             Alert w = new Alert(Alert.AlertType.WARNING, "Tu sistema no soporta la Papelera.\nSe usará eliminación permanente.", ButtonType.OK, ButtonType.CANCEL);
             if (w.showAndWait().orElse(ButtonType.CANCEL) == ButtonType.CANCEL) return;
             toTrash = false;
         }
 
-        /* 6. Borrar ----------------------------------------------------------- */
         int ok = 0, fail = 0;
         for (Path p : tgt) {
             try {
@@ -312,22 +314,20 @@ public class MainController {
                     recursiveDelete(p);
                     ok++;
                 }
-            } catch (IllegalArgumentException | IOException ex) {
+            } catch (Exception ex) {
                 fail++;
             }
         }
         statusLabel.setText((toTrash ? "A Papelera: " : "Eliminados: ") + ok + (fail > 0 ? " | Fallos: " + fail : ""));
 
-        /* 7. Limpiar el árbol ------------------------------------------------- */
-        if (whole && !sel.isLeaf()) {                      // se quitó una categoría entera
-            sel.getParent().getChildren().remove(sel);
-        } else {                                           // archivo individual
-            TreeItem<String> cat = sel.getParent();
-            cat.getChildren().remove(sel);
-            if (cat.getChildren().isEmpty()) cat.getParent().getChildren().remove(cat);
+        /* limpiar árbol -------------------------------------------- */
+        if (whole && !sel.isLeaf()) sel.getParent().getChildren().remove(sel);
+        else {
+            TreeItem<String> parent = sel.getParent();
+            parent.getChildren().remove(sel);
+            if (parent.getChildren().isEmpty() && parent.getParent() != null)
+                parent.getParent().getChildren().remove(parent);
         }
-
-        /* 8. Si ya no queda nada, volver al placeholder ----------------------- */
         if (treeView.getRoot() != null && treeView.getRoot().getChildren().isEmpty()) {
             treeView.setRoot(null);
             mainSplit.setVisible(false);
@@ -336,8 +336,9 @@ public class MainController {
         }
     }
 
-
-    /* utilidades */
+    /* ============================================================= */
+    /*  Utilidades                                                   */
+    /* ============================================================= */
     private static void recursiveDelete(Path p) throws IOException {
         if (Files.notExists(p)) return;
         if (Files.isDirectory(p, LinkOption.NOFOLLOW_LINKS)) {
@@ -358,7 +359,21 @@ public class MainController {
     }
 
     private static Path extractPath(String disp) {
-        int idx = disp.lastIndexOf(" (");
-        return Paths.get((idx < 0 ? disp : disp.substring(0, idx)).trim());
+        int i = disp.lastIndexOf(" (");
+        return Paths.get((i < 0 ? disp : disp.substring(0, i)).trim());
+    }
+
+    private long bytesFromDisplay(String disp) {
+        int i1 = disp.lastIndexOf('('), i2 = disp.lastIndexOf(')');
+        if (i1 < 0 || i2 < 0) return 0;
+        String[] p = disp.substring(i1 + 1, i2).split(" ");
+        double v = Double.parseDouble(p[0].replace(',', '.'));
+        return switch (p[1]) {
+            case "KB" -> (long) (v * 1024);
+            case "MB" -> (long) (v * 1024 * 1024);
+            case "GB" -> (long) (v * 1024 * 1024 * 1024);
+            case "TB" -> (long) (v * 1024L * 1024 * 1024 * 1024);
+            default -> (long) v;
+        };
     }
 }
