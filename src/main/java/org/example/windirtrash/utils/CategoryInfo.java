@@ -22,9 +22,20 @@ public final class CategoryInfo {
                     new Meta("Datos que los programas pueden reconstruir (temp, __pycache__, etc.).", Risk.SAFE)),
             Map.entry("node_modules",
                     new Meta("Dependencias descargadas por proyectos Node.js.", Risk.SAFE)),
+            Map.entry("Miniaturas del sistema",
+                    new Meta("Thumbs.db, .DS_Store… Archivos de metadatos creados por el SO.", Risk.SAFE)),
+            Map.entry("Objetos compilados",
+                    new Meta(".class, .o, target/, build/… Productos intermedios de compilación.", Risk.SAFE)),
+            Map.entry("Archivos vacíos",
+                    new Meta("Ficheros de 0 B.", Risk.SAFE)),
+            Map.entry("Carpetas vacías",
+                    new Meta("Directorios sin contenido.", Risk.SAFE)),
+            Map.entry("Atajos rotos",
+                    new Meta("Accesos directos cuyos destinos ya no existen.", Risk.SAFE)),
             Map.entry("Otros",
                     new Meta("Archivos que no encajan en las categorías anteriores.", Risk.REVIEW))
-    );
+
+            );
 
     /** Conveniencia para no repetir calcos en cada clase */
     public static Meta get(String cat){

@@ -96,7 +96,9 @@ public class TreemapPane extends Pane {
         redraw();                 // tamaño ya actualizado
     }
 
-    /* ---------- dibujado ---------- */
+
+    // TreemapPane.java
+
     private void redraw() {
         double W = getWidth(), H = getHeight();
         GraphicsContext g = cv.getGraphicsContext2D();
@@ -110,12 +112,27 @@ public class TreemapPane extends Pane {
         if (junk.isEmpty()) return;
         junk.sort(Comparator.comparingLong(FileNode::getSize).reversed());
 
-        long bytes = junk.stream().mapToLong(FileNode::getSize).sum();
+        long totalBytes = junk.stream().mapToLong(FileNode::getSize).sum();
+        if (totalBytes == 0) return;  // sólo 0 B
+
         double areaT = W * H;
         Map<FileNode, Double> area = new HashMap<>();
-        junk.forEach(n -> area.put(n, areaT * n.getSize() / bytes));
+        List<FileNode> draw = new ArrayList<>();
 
-        split(junk, 0, junk.size() - 1, 0, 0, W, H, area);
+        // ---> Incluir todos los nodos, aunque salgan muy pequeñitos <---
+        for (FileNode n : junk) {
+            double a = areaT * n.getSize() / totalBytes;
+            area.put(n, a);
+            draw.add(n);
+        }
+        if (draw.isEmpty()) return;
+
+        long drawBytes = draw.stream().mapToLong(FileNode::getSize).sum();
+        for (FileNode n : draw) {
+            area.put(n, areaT * n.getSize() / drawBytes);   // reescalar
+        }
+
+        split(draw, 0, draw.size() - 1, 0, 0, W, H, area);
 
         for (Rect r : rects) {
             g.setFill(color(r.n.getCategory()));
@@ -132,6 +149,7 @@ public class TreemapPane extends Pane {
             }
         }
     }
+
 
     /* ---------- interacción ---------- */
     private void onMove(MouseEvent e) {
@@ -167,35 +185,69 @@ public class TreemapPane extends Pane {
             case "Volcados (dumps)" -> Color.PALEVIOLETRED;
             case "Carpetas de caché" -> Color.KHAKI;
             case "node_modules" -> Color.LIGHTSALMON;
+            case "Miniaturas del sistema" -> Color.LIGHTPINK;
+            case "Objetos compilados" -> Color.LIGHTSEAGREEN;
+            case "Archivos vacíos" -> Color.SILVER;
+            case "Carpetas vacías" -> Color.DARKGOLDENROD;
+            case "Atajos rotos" -> Color.LIGHTCORAL;
             default -> Color.LIGHTGRAY;
         };
     }
 
-    private void split(List<FileNode> l, int from, int to, double x, double y, double w, double h, Map<FileNode, Double> area) {
-        if (from > to) return;
+    private void split(List<FileNode> list, int from, int to, double x, double y, double w, double h, Map<FileNode, Double> area) {
+
+        // Si no hay nada que pintar o la región es inválida, corta.
+        if (from > to || w <= 0 || h <= 0) return;
+
+        // Caso base: un único elemento ocupa toda la región restante
         if (from == to) {
-            rects.add(new Rect(l.get(from), x, y, w, h));
+            rects.add(new Rect(list.get(from), x, y, w, h));
             return;
         }
-        double total = 0, acc = 0;
-        int pivot = from;
-        for (int i = from; i <= to; i++) total += area.get(l.get(i));
+
+        // Calcular área total de [from..to]
+        double total = 0;
         for (int i = from; i <= to; i++) {
-            acc += area.get(l.get(i));
+            total += area.getOrDefault(list.get(i), 0.0);
+        }
+        if (total <= 0) return;  // todo a 0 B
+
+        // Encontrar pivot: punto donde la suma parcial >= total/2
+        double acc = 0;
+        int pivot = from;
+        for (int i = from; i <= to; i++) {
+            acc += area.get(list.get(i));
             if (acc >= total / 2) {
                 pivot = i;
                 break;
             }
         }
-        double ratio = acc / total;
+
+        // Asegurar que siempre acortamos el rango
+        if (pivot == from) {
+            pivot++;
+        } else if (pivot == to) {
+            pivot--;
+        }
+
+        // Si tras el ajuste el rango es inválido, salimos
+        if (pivot < from || pivot >= to) {
+            // Como última salvaguarda, tratamos todos como uno solo
+            rects.add(new Rect(list.get(from), x, y, w, h));
+            return;
+        }
+
+        // Particionar según orientación
         if (w >= h) {
-            double w1 = w * ratio;
-            split(l, from, pivot, x, y, w1, h, area);
-            split(l, pivot + 1, to, x + w1, y, w - w1, h, area);
+            double w1 = w * (acc / total);
+            // izquierda: [from..pivot], derecha: [pivot+1..to]
+            split(list, from, pivot, x, y, w1, h, area);
+            split(list, pivot + 1, to, x + w1, y, w - w1, h, area);
         } else {
-            double h1 = h * ratio;
-            split(l, from, pivot, x, y, w, h1, area);
-            split(l, pivot + 1, to, x, y + h1, w, h - h1, area);
+            double h1 = h * (acc / total);
+            // arriba:   [from..pivot], abajo: [pivot+1..to]
+            split(list, from, pivot, x, y, w, h1, area);
+            split(list, pivot + 1, to, x, y + h1, w, h - h1, area);
         }
     }
 }
