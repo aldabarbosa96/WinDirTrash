@@ -1,10 +1,13 @@
 <?xml version="1.0" encoding="UTF-8"?>
 
+<?import javafx.geometry.Insets?>
 <?import javafx.scene.control.*?>
 <?import javafx.scene.layout.*?>
-<?import javafx.geometry.Insets?>
 <?import org.example.windirtrash.view.TreemapPane?>
 
+<!-- ════════════════════════════════════════════════════════════════════ -->
+<!--  Vista principal – WinDirTrash                                      -->
+<!-- ════════════════════════════════════════════════════════════════════ -->
 <BorderPane fx:id="root"
             xmlns:fx="http://javafx.com/fxml"
             fx:controller="org.example.windirtrash.controller.MainController">
@@ -16,7 +19,6 @@
                 <MenuItem text="Salir" onAction="#onSalir"/>
             </Menu>
             <Menu text="Acciones">
-                <MenuItem text="Escanear…" onAction="#onEscanear"/>
                 <MenuItem text="Limpiar seleccionados" onAction="#onLimpiar"/>
             </Menu>
             <Menu text="Ayuda">
@@ -25,36 +27,53 @@
         </MenuBar>
     </top>
 
-    <!-- ────────── Centro: placeholder + resultados ────────── -->
+    <!-- ────────── Centro ────────── -->
     <center>
-        <StackPane>
+        <VBox spacing="8">
 
-            <!-- Placeholder (botón grande) -->
-            <VBox fx:id="placeholderBox" alignment="CENTER" spacing="10">
-                <Label text="Pulsa Escanear para comenzar"/>
-                <Button text="Escanear" onAction="#onEscanear"/>
-            </VBox>
+            <!-- Barra que se muestra DURANTE/POST escaneo (padding añadido) -->
+            <HBox fx:id="topBar"
+                  spacing="8"
+                  alignment="CENTER_LEFT"
+                  visible="false"
+                  managed="false">
+                <padding>
+                    <Insets top="8" right="8" bottom="4" left="8"/>
+                </padding>
+            </HBox>
 
-            <!-- SplitPane con árbol + treemap (inicialmente oculto) -->
-            <SplitPane fx:id="mainSplit"
-                       orientation="VERTICAL"
-                       dividerPositions="0.55"
-                       visible="false">
-                <TreeView fx:id="treeView"/>
-                <TreemapPane fx:id="treemapPane" minHeight="150"/>
-            </SplitPane>
+            <StackPane VBox.vgrow="ALWAYS">
 
-        </StackPane>
+                <!-- Placeholder inicial con selector centrado -->
+                <VBox fx:id="placeholderBox" alignment="CENTER" spacing="16">
+                    <Label text="Selecciona la unidad y pulsa Escanear"/>
+                    <!--  Esta barra se reubica en topBar al iniciar el escaneo -->
+                    <HBox fx:id="driveBar" spacing="8" alignment="CENTER">
+                        <Label text="Unidad:"/>
+                        <ChoiceBox fx:id="driveChoice" prefWidth="220"/>
+                        <Button   fx:id="scanBtn" text="Escanear" onAction="#onEscanear"/>
+                    </HBox>
+                </VBox>
+
+                <!-- Resultados -->
+                <SplitPane fx:id="mainSplit"
+                           orientation="VERTICAL"
+                           dividerPositions="0.55"
+                           visible="false">
+                    <TreeView    fx:id="treeView"/>
+                    <TreemapPane fx:id="treemapPane" minHeight="150"/>
+                </SplitPane>
+
+            </StackPane>
+        </VBox>
     </center>
 
     <!-- ────────── Barra de estado ────────── -->
     <bottom>
         <HBox spacing="8">
-            <padding>
-                <Insets top="6" right="6" bottom="6" left="6"/>
-            </padding>
-            <Label fx:id="statusLabel" text="Listo."/>
-            <ProgressBar fx:id="progressBar" prefWidth="150" visible="false"/>
+            <padding><Insets top="6" right="6" bottom="6" left="6"/></padding>
+            <Label       fx:id="statusLabel" text="Listo."/>
+            <ProgressBar fx:id="progressBar" prefWidth="160" visible="false"/>
         </HBox>
     </bottom>
 </BorderPane>
