@@ -149,39 +149,68 @@ public class FileScannerTask extends Task<FileNode> {
     /* ─────────── post-process ─────────── */
 
     private void postProcess(Map<Path, FileNode> map) {
-
         final int total = map.size();
         final AtomicInteger done = new AtomicInteger();
+        final List<FileNode> batch = new ArrayList<>();
 
-        map.values().forEach(n -> {
+        // Cuántos nodos procesar antes de forzar un update
+        final int chunk = Math.max(1, total / 100);
+        long lastUpdateTime = System.currentTimeMillis();
 
-            /* ───────────────── archivos vacíos ───────────────── */
-            if (!n.isJunk()
-                    && n.getFile().isFile()
-                    && n.getSize() == 0) {
-                markAs(n, "Archivos vacíos");
-                return;                    // ① sigue con el siguiente nodo
+        for (FileNode n : map.values()) {
+            // ── tus reglas globales ──
+            boolean marked = false;
+            if (!n.isJunk() && n.getFile().isFile() && n.getSize() == 0) {
+                n.setJunk(true);
+                n.setCategory("Archivos vacíos");
+                marked = true;
+            } else if (!n.isJunk() && n.getFile().isDirectory() && n.getChildren().isEmpty()) {
+                n.setJunk(true);
+                n.setCategory("Carpetas vacías");
+                marked = true;
+            } else if (!n.isJunk() && n.getFile().isFile() && n.getFile().getName().toLowerCase().endsWith(".lnk") && !linkTargetExists(n.getFile().toPath())) {
+                n.setJunk(true);
+                n.setCategory("Atajos rotos");
+                marked = true;
             }
-
-            /* ──────────────── carpetas vacías ────────────────── */
-            if (!n.isJunk()
-                    && n.getFile().isDirectory()
-                    && n.getChildren().isEmpty()) {
-                markAs(n, "Carpetas vacías");
-                return;                    // ② evita que pase al bloque .lnk
+            if (marked) {
+                batch.add(n);
             }
+            // ──────────────────────────
 
-            /* ──────────────── atajos .lnk rotos ──────────────── */
-            if (!n.isJunk()
-                    && n.getFile().isFile()
-                    && n.getFile().getName().toLowerCase().endsWith(".lnk")
-                    && !linkTargetExists(n.getFile().toPath())) {
-                markAs(n, "Atajos rotos");
+            int d = done.incrementAndGet();
+            long now = System.currentTimeMillis();
+
+            // cada 'chunk' nodos o cada 200 ms como mínimo, hago un update
+            if (d % chunk == 0 || now - lastUpdateTime > 200) {
+                // despacha en bloque las notificaciones al UI thread
+                if (!batch.isEmpty()) {
+                    List<FileNode> toNotify = new ArrayList<>(batch);
+                    batch.clear();
+                    Platform.runLater(() -> {
+                        for (FileNode j : toNotify) {
+                            // tu método original de notificación
+                            notifyJunk(j);
+                        }
+                    });
+                }
+
+                updateProgress(d, total);
+                updateMessage(String.format("Post-procesando %d de %d nodos…", d, total));
+                lastUpdateTime = now;
             }
-        });
+        }
 
+        // flush final de cualquier resto
+        if (!batch.isEmpty()) {
+            List<FileNode> toNotify = new ArrayList<>(batch);
+            Platform.runLater(() -> {
+                for (FileNode j : toNotify) notifyJunk(j);
+            });
+        }
         updateProgress(total, total);
     }
+
 
     /* ─────────── util ─────────── */
 
