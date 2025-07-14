@@ -1,6 +1,7 @@
 package org.example.windirtrash.view;
 
-import javafx.application.Platform;
+import javafx.beans.value.ChangeListener;
+import javafx.beans.value.ObservableValue;
 import javafx.scene.canvas.Canvas;
 import javafx.scene.canvas.GraphicsContext;
 import javafx.scene.control.Tooltip;
@@ -14,11 +15,6 @@ import org.example.windirtrash.utils.CategoryInfo;
 import java.util.*;
 import java.util.function.Consumer;
 
-/**
- * Treemap por categorías.
- * – Borde rojo para la categoría seleccionada.
- * – Callback al hacer clic: onCategoryClicked.accept(String cat).
- */
 public class TreemapPane extends Pane {
 
     /* ---------- structs ---------- */
@@ -43,10 +39,9 @@ public class TreemapPane extends Pane {
     private final Canvas cv = new Canvas();
     private final List<Rect> rects = new ArrayList<>();
     private final Tooltip tip = new Tooltip();
-
     private FileNode root;
-    private String highlightCat;              // nombre de categoría a resaltar
-    private Consumer<String> onCategoryClicked; // callback
+    private String highlightCat;
+    private Consumer<String> onCategoryClicked;
 
     /* ---------- ctor ---------- */
     public TreemapPane() {
@@ -61,9 +56,26 @@ public class TreemapPane extends Pane {
     /* ---------- API ---------- */
     public void setRoot(FileNode r) {
         root = r;
-        requestLayout();
-        //Platform.runLater(this::redraw);
+        requestLayout();          // provoca layoutChildren()
 
+        // 1ª pasada: si todavía medimos 0×0, esperamos a la 1ª
+        // dimensión “real” para dibujar (one-shot listener).
+        if (getWidth() < 5 || getHeight() < 5) {
+            ChangeListener<Number> once = new ChangeListener<>() {
+                @Override
+                public void changed(ObservableValue<? extends Number> o, Number ov, Number nv) {
+                    if (getWidth() >= 5 && getHeight() >= 5) {
+                        redraw();
+                        widthProperty().removeListener(this);
+                        heightProperty().removeListener(this);
+                    }
+                }
+            };
+            widthProperty().addListener(once);
+            heightProperty().addListener(once);
+        } else {
+            redraw();
+        }
     }
 
     public void setHighlightCategory(String c) {
@@ -75,41 +87,36 @@ public class TreemapPane extends Pane {
         onCategoryClicked = cb;
     }
 
-    /* ============================================================ */
-    /*  paint                                                       */
-    /* ============================================================ */
+    /* ---------- layout ---------- */
     @Override
     protected void layoutChildren() {
         super.layoutChildren();
         cv.setWidth(getWidth());
         cv.setHeight(getHeight());
-        redraw();
+        redraw();                 // tamaño ya actualizado
     }
 
+    /* ---------- dibujado ---------- */
     private void redraw() {
-        GraphicsContext g = cv.getGraphicsContext2D();
         double W = getWidth(), H = getHeight();
+        GraphicsContext g = cv.getGraphicsContext2D();
         g.clearRect(0, 0, W, H);
         rects.clear();
 
         if (root == null || W < 5 || H < 5) return;
 
-        // 1) archivos basura
         List<FileNode> junk = new ArrayList<>();
         collect(root, junk);
         if (junk.isEmpty()) return;
         junk.sort(Comparator.comparingLong(FileNode::getSize).reversed());
 
-        // 2) áreas
-        long totalBytes = junk.stream().mapToLong(FileNode::getSize).sum();
-        double totalA = W * H;
+        long bytes = junk.stream().mapToLong(FileNode::getSize).sum();
+        double areaT = W * H;
         Map<FileNode, Double> area = new HashMap<>();
-        junk.forEach(n -> area.put(n, totalA * n.getSize() / totalBytes));
+        junk.forEach(n -> area.put(n, areaT * n.getSize() / bytes));
 
-        // 3) dividir recursivamente
         split(junk, 0, junk.size() - 1, 0, 0, W, H, area);
 
-        // 4) pintar
         for (Rect r : rects) {
             g.setFill(color(r.n.getCategory()));
             g.fillRect(r.x, r.y, r.w, r.h);
@@ -164,7 +171,6 @@ public class TreemapPane extends Pane {
         };
     }
 
-    /* ---------- split ---------- */
     private void split(List<FileNode> l, int from, int to, double x, double y, double w, double h, Map<FileNode, Double> area) {
         if (from > to) return;
         if (from == to) {

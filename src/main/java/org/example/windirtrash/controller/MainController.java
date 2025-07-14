@@ -213,10 +213,7 @@ public class MainController {
 
         task.setOnSucceeded(e -> {
             FileNode rootNode = task.getValue();
-
-            // ← dejamos que el layout termine y luego pintamos
-            Platform.runLater(() -> treemapPane.setRoot(rootNode));
-
+            treemapPane.setRoot(rootNode);
             finishScan("Escaneo completado");
         });
         task.setOnFailed(e -> finishScan("Error: " + task.getException().getMessage()));
