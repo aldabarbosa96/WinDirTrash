@@ -3,9 +3,12 @@ package org.example.windirtrash.controller;
 import javafx.application.Platform;
 import javafx.fxml.FXML;
 import javafx.scene.control.*;
+import javafx.scene.image.Image;
+import javafx.scene.image.ImageView;
 import javafx.scene.input.MouseButton;
 import javafx.scene.layout.VBox;
 import javafx.stage.Stage;
+import org.example.windirtrash.MainApp;
 import org.example.windirtrash.model.FileNode;
 import org.example.windirtrash.task.FileScannerTask;
 import org.example.windirtrash.utils.CategoryInfo;
@@ -46,37 +49,44 @@ public class MainController {
         mainSplit.managedProperty().bind(mainSplit.visibleProperty());
 
         treeView.setCellFactory(tv -> {
-            // Tooltip único por celda
+            /* ➊ Cargamos las imágenes UNA vez por celda ------------------------ */
+            Image imgSafe = new Image(
+                    Objects.requireNonNull(MainApp.class.getResource(
+                            "/org/example/windirtrash/icons/good.png")).toExternalForm(), 16, 16, true, true);
+            Image imgRisk = new Image(
+                    Objects.requireNonNull(MainApp.class.getResource(
+                            "/org/example/windirtrash/icons/risk.png")).toExternalForm(), 16, 16, true, true);
+            ImageView ivSafe  = new ImageView(imgSafe);
+            ImageView ivRisk  = new ImageView(imgRisk);
+
             Tooltip tt = new Tooltip();
-            TreeCell<String> cell = new TreeCell<>() {
-                @Override
-                protected void updateItem(String item, boolean empty) {
+            return new TreeCell<>() {
+                @Override protected void updateItem(String item, boolean empty) {
                     super.updateItem(item, empty);
 
-                    if (empty || item == null) {            // celda vacía
-                        setText(null);
-                        setTooltip(null);
-                        setStyle("");
-                        return;
+                    if (empty || item == null) {
+                        setText(null); setTooltip(null); setGraphic(null); setStyle(""); return;
                     }
 
                     setText(item);
 
-                    /* ----- categorías (no-leaf) ----- */
-                    if (!getTreeItem().isLeaf()) {
-                        String cat = item.contains(" (") ? item.substring(0, item.indexOf(" (")) : item;
-                        tt.setText(CategoryInfo.DESC.getOrDefault(cat, "Sin descripción."));
+                    if (!getTreeItem().isLeaf()) {                // ← categorías
+                        String cat  = item.split(" \\(")[0];
+                        var meta    = CategoryInfo.get(cat);
+                        tt.setText(meta.desc());
                         setTooltip(tt);
-                        setStyle("");
-                    } else {
-                        setTooltip(null);
+
+                        /* icono según riesgo */
+                        setGraphic(meta.risk() == CategoryInfo.Risk.SAFE ? ivSafe : ivRisk);
+                        setStyle("");                              // color por CSS, sin unicode
+                    } else {                                       // ← archivos
+                        setGraphic(null);
                         setStyle("-fx-text-fill: crimson;");
+                        setTooltip(null);
                     }
                 }
             };
-            return cell;
         });
-
 
 
         /* menú contextual */
@@ -184,18 +194,43 @@ public class MainController {
     }
 
     private void deleteSelected(boolean whole) {
+
+        /* 1. Selección -------------------------------------------------------- */
         TreeItem<String> sel = treeView.getSelectionModel().getSelectedItem();
         if (sel == null) return;
 
+        /* 2. Construir lista de rutas a eliminar ----------------------------- */
         List<Path> tgt = new ArrayList<>();
-        if (whole && !sel.isLeaf()) sel.getChildren().forEach(c -> tgt.add(extractPath(c.getValue())));
-        else if (sel.isLeaf()) tgt.add(extractPath(sel.getValue()));
-        else {
+        if (whole && !sel.isLeaf()) {
+            // categoría completa
+            sel.getChildren().forEach(c -> tgt.add(extractPath(c.getValue())));
+        } else if (sel.isLeaf()) {
+            // archivo individual
+            tgt.add(extractPath(sel.getValue()));
+        } else {
             statusLabel.setText("Selecciona un archivo o categoría.");
             return;
         }
 
-        Alert dlg = new Alert(Alert.AlertType.CONFIRMATION, "Mover a Papelera permite recuperar.\nEliminar borra definitivamente.");
+        /* 3. ¿Hay algo que convenga revisar? --------------------------------- */
+        // Averiguamos las categorías implicadas
+        Set<String> cats = new HashSet<>();
+        if (whole && !sel.isLeaf()) {
+            cats.add(sel.getValue());                     // la propia categoría
+        } else {
+            cats.add(sel.getParent().getValue());         // padre del archivo
+        }
+        boolean anyReview = cats.stream()
+                .map(lbl -> lbl.split(" \\(")[0])         // quitar “ (10 MB)”
+                .anyMatch(c -> CategoryInfo.get(c).risk() == CategoryInfo.Risk.REVIEW);
+
+        /* 4. Diálogo de confirmación ----------------------------------------- */
+        Alert dlg = new Alert(Alert.AlertType.CONFIRMATION);
+        dlg.setHeaderText(anyReview
+                ? "⚠️ Hay elementos que conviene revisar antes de borrar."
+                : "✅ Los elementos seleccionados son seguros de borrar.");
+        dlg.setContentText("Mover a Papelera permite recuperar.\nEliminar borra definitivamente.");
+
         ButtonType btTrash = new ButtonType("Mover a Papelera");
         ButtonType btDel = new ButtonType("Eliminar");
         dlg.getButtonTypes().setAll(btTrash, btDel, ButtonType.CANCEL);
@@ -203,14 +238,20 @@ public class MainController {
         ButtonType choice = dlg.showAndWait().orElse(ButtonType.CANCEL);
         if (choice == ButtonType.CANCEL) return;
 
+        /* 5. Papelera vs eliminación permanente ------------------------------ */
         boolean toTrash = choice == btTrash;
-        boolean trashOK = Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.MOVE_TO_TRASH);
+        boolean trashOK = Desktop.isDesktopSupported()
+                && Desktop.getDesktop().isSupported(Desktop.Action.MOVE_TO_TRASH);
+
         if (toTrash && !trashOK) {
-            Alert w = new Alert(Alert.AlertType.WARNING, "Tu sistema no soporta Papelera.\nSe usará eliminación permanente.", ButtonType.OK, ButtonType.CANCEL);
+            Alert w = new Alert(Alert.AlertType.WARNING,
+                    "Tu sistema no soporta la Papelera.\nSe usará eliminación permanente.",
+                    ButtonType.OK, ButtonType.CANCEL);
             if (w.showAndWait().orElse(ButtonType.CANCEL) == ButtonType.CANCEL) return;
             toTrash = false;
         }
 
+        /* 6. Borrar ----------------------------------------------------------- */
         int ok = 0, fail = 0;
         for (Path p : tgt) {
             try {
@@ -225,15 +266,20 @@ public class MainController {
                 fail++;
             }
         }
-        statusLabel.setText((toTrash ? "A Papelera: " : "Eliminados: ") + ok + (fail > 0 ? " | Fallos: " + fail : ""));
+        statusLabel.setText((toTrash ? "A Papelera: " : "Eliminados: ") + ok +
+                (fail > 0 ? " | Fallos: " + fail : ""));
 
-        /* limpia el árbol */
-        if (whole && !sel.isLeaf()) sel.getParent().getChildren().remove(sel);
-        else {
+        /* 7. Limpiar el árbol ------------------------------------------------- */
+        if (whole && !sel.isLeaf()) {                      // se quitó una categoría entera
+            sel.getParent().getChildren().remove(sel);
+        } else {                                           // archivo individual
             TreeItem<String> cat = sel.getParent();
             cat.getChildren().remove(sel);
-            if (cat.getChildren().isEmpty()) cat.getParent().getChildren().remove(cat);
+            if (cat.getChildren().isEmpty())
+                cat.getParent().getChildren().remove(cat);
         }
+
+        /* 8. Si ya no queda nada, volver al placeholder ----------------------- */
         if (treeView.getRoot() != null && treeView.getRoot().getChildren().isEmpty()) {
             treeView.setRoot(null);
             mainSplit.setVisible(false);
@@ -241,6 +287,7 @@ public class MainController {
             treemapPane.setRoot(null);
         }
     }
+
 
     /* utilidades */
     private static void recursiveDelete(Path p) throws IOException {

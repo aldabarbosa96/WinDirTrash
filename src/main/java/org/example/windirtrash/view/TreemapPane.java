@@ -138,8 +138,7 @@ public class TreemapPane extends Pane {
     private void onMove(MouseEvent e) {
         for (Rect r : rects)
             if (r.contains(e.getX(), e.getY())) {
-                tip.setText(r.n.getFile().getAbsolutePath() + "\n" + FileNode.convertToHumanReadable(r.n.getSize()) + "\n\n" + CategoryInfo.DESC.getOrDefault(r.n.getCategory(), ""));
-
+                tip.setText(r.n.getFile().getAbsolutePath() + "\n" + FileNode.convertToHumanReadable(r.n.getSize()) + "\n\n" + CategoryInfo.get(r.n.getCategory()).desc() + "\n" + (CategoryInfo.get(r.n.getCategory()).risk() == CategoryInfo.Risk.SAFE ? "✅ Seguro de borrar" : "⚠️ Revisa antes de borrar"));
                 Tooltip.install(canvas, tip);
                 tip.setShowDelay(Duration.millis(40));
                 return;
