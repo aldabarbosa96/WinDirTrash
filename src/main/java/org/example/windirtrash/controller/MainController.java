@@ -1,6 +1,7 @@
 package org.example.windirtrash.controller;
 
 import javafx.application.Platform;
+import javafx.concurrent.Task;
 import javafx.fxml.FXML;
 import javafx.scene.control.*;
 import javafx.scene.image.Image;
@@ -205,20 +206,75 @@ public class MainController {
         treeView.setShowRoot(false);
 
         /* tarea de escaneo */
-        FileScannerTask task = new FileScannerTask(selDrive.toPath(), this::addJunkToUI);
+        // 1) ——— Tarea de escaneo (NO toca la UI) ——————————————————————
+        FileScannerTask scanTask = new FileScannerTask(selDrive.toPath());
 
-        progressBar.progressProperty().bind(task.progressProperty());
+// barra y mensaje durante el escaneo
+        progressBar.progressProperty().bind(scanTask.progressProperty());
+        statusLabel.textProperty().bind(scanTask.messageProperty());
         progressBar.setVisible(true);
-        statusLabel.textProperty().bind(task.messageProperty());
 
-        task.setOnSucceeded(e -> {
-            FileNode rootNode = task.getValue();
-            treemapPane.setRoot(rootNode);
-            finishScan("Escaneo completado");
+// 2) ——— Cuando termina el escaneo arrancamos el “pintado” ——————
+        scanTask.setOnSucceeded(ev -> {
+
+            // datos que devuelve el escáner
+            FileNode rootNode = scanTask.getValue();
+            List<FileNode> junkList = scanTask.getJunkFound();
+
+            // preparamos la UI para la fase de pintado
+            progressBar.progressProperty().unbind();
+            statusLabel.textProperty().unbind();
+            statusLabel.setText("Construyendo vista…");
+            progressBar.setProgress(ProgressBar.INDETERMINATE_PROGRESS);
+
+            // 2‑bis) Tarea que añade los nodos al TreeView por lotes
+            Task<Void> paintTask = new Task<>() {
+                @Override
+                protected Void call() throws Exception {
+
+                    final int BATCH = 25;           // nº de hojas por tanda
+                    for (int i = 0; i < junkList.size(); i += BATCH) {
+
+                        int end = Math.min(i + BATCH, junkList.size());
+                        List<FileNode> slice = junkList.subList(i, end);
+
+                        // cada tanda se ejecuta en el hilo FX
+                        Platform.runLater(() -> slice.forEach(MainController.this::addJunkToUI));
+
+                        updateProgress(end, junkList.size());      // opcional
+                        Thread.sleep(8);                           // cede CPU → barra fluida
+                    }
+                    return null;
+                }
+            };
+
+            // barra de progreso para la fase de pintado
+            progressBar.progressProperty().bind(paintTask.progressProperty());
+
+            paintTask.setOnSucceeded(ev2 -> {
+                progressBar.progressProperty().unbind();
+                progressBar.setVisible(false);
+                statusLabel.setText("Listo.");
+                treemapPane.setRoot(rootNode);   // treemap de una sola vez
+            });
+
+            paintTask.setOnFailed(ev2 -> {
+                progressBar.setVisible(false);
+                statusLabel.setText("Error al construir la vista: " + paintTask.getException().getMessage());
+            });
+
+            new Thread(paintTask, "paint-ui").start();
         });
-        task.setOnFailed(e -> finishScan("Error: " + task.getException().getMessage()));
 
-        new Thread(task, "scan").start();
+// 3) ——— Manejo de fallo del escáner ————————————————
+        scanTask.setOnFailed(ev -> {
+            progressBar.setVisible(false);
+            statusLabel.textProperty().unbind();
+            statusLabel.setText("Error: " + scanTask.getException().getMessage());
+        });
+
+// 4) ——— Lanzamos la tarea de escaneo ————————————————
+        new Thread(scanTask, "scan").start();
     }
 
     private void finishScan(String msg) {

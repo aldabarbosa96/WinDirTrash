@@ -1,235 +1,200 @@
 package org.example.windirtrash.task;
 
-import javafx.application.Platform;
 import javafx.concurrent.Task;
 import org.example.windirtrash.model.FileNode;
 
 import java.io.IOException;
 import java.io.RandomAccessFile;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.*;
-import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.function.Consumer;
 
 public class FileScannerTask extends Task<FileNode> {
 
-    /* ─────────── reglas nombre / extensión ─────────── */
+    /* ══════════════════ tablas de reglas ══════════════════ */
 
-    private static final Map<String, String> EXT_TO_CAT = Map.ofEntries(Map.entry(".tmp", "Archivos temporales"), Map.entry(".temp", "Archivos temporales"), Map.entry(".log", "Archivos log"), Map.entry(".dmp", "Volcados (dumps)"),
-
+    private static final Map<String, String> EXT_TO_CAT = Map.ofEntries(Map.entry(".tmp", "Archivos temporales"),
+            Map.entry(".temp", "Archivos temporales"), Map.entry(".log", "Archivos log"), Map.entry(".dmp", "Volcados (dumps)"),
             Map.entry(".ds_store", "Miniaturas del sistema"), Map.entry("thumbs.db", "Miniaturas del sistema"), Map.entry(".appledouble", "Miniaturas del sistema"),
-
             Map.entry(".class", "Objetos compilados"), Map.entry(".o", "Objetos compilados"), Map.entry(".obj", "Objetos compilados"));
 
-    private static final Map<String, String> DIR_TO_CAT = Map.ofEntries(Map.entry("temp", "Carpetas de caché"), Map.entry("tmp", "Carpetas de caché"), Map.entry("__pycache__", "Carpetas de caché"), Map.entry("node_modules", "node_modules"),
-
-            Map.entry("npm-cache", "Carpetas de caché"), Map.entry(".gradle", "Carpetas de caché"),   // subdir /caches
-            Map.entry(".m2", "Carpetas de caché"),    // subdir /repository
+    private static final Map<String, String> DIR_TO_CAT = Map.ofEntries(Map.entry("temp", "Carpetas de caché"), Map.entry("tmp", "Carpetas de caché"), Map.entry("__pycache__", "Carpetas de caché"), Map.entry("npm-cache", "Carpetas de caché"), Map.entry(".gradle", "Carpetas de caché"),   // /caches
+            Map.entry(".m2", "Carpetas de caché"),
             Map.entry("cache", "Carpetas de caché"),
+            Map.entry("target", "Objetos compilados"), Map.entry("build", "Objetos compilados"),
+            Map.entry("node_modules", "node_modules"));
 
-            Map.entry("target", "Objetos compilados"), Map.entry("build", "Objetos compilados"));
+    /* ══════════════════ configuración ══════════════════ */
 
-    /* ─────────── fields ─────────── */
+    private static final List<String> EXCLUDED = List.of("/windows/winsxs", "/system volume information", "/$recycle.bin");
+
+    private static final int PROGRESS_MASK = 0x1FFF;   // 8 192
+
+    /* ══════════════════ estado ══════════════════ */
 
     private final Path rootPath;
-    private final Consumer<FileNode> junkCallback;
+    private final ConcurrentMap<Path, FileNode> cache = new ConcurrentHashMap<>();
+    private final AtomicLong done = new AtomicLong();
 
-    public FileScannerTask(Path rootPath, Consumer<FileNode> cb) {
-        this.rootPath = rootPath;
-        this.junkCallback = cb;
+    /**
+     * Lista final con todos los nodos basura encontrados.
+     */
+    private final List<FileNode> junkFound = Collections.synchronizedList(new ArrayList<>());
+
+    public FileScannerTask(Path root) {
+        this.rootPath = root;
     }
 
-    /* ─────────── main ─────────── */
+    /* ── getter público para el controlador ───────────────────────── */
+    public List<FileNode> getJunkFound() {
+        return List.copyOf(junkFound);
+    }
+
+    /* ══════════════════ ejecución principal ══════════════════ */
 
     @Override
     protected FileNode call() throws Exception {
 
-        updateMessage("Escaneando " + rootPath + " …");
+        updateMessage("Escaneando " + rootPath + "…");
+        cache.put(rootPath, new FileNode(rootPath.toFile()));
 
-        final FileNode rootNode = new FileNode(rootPath.toFile());
-        final Map<Path, FileNode> map = new HashMap<>();
-        map.put(rootPath, rootNode);
-
-        final AtomicLong total = new AtomicLong();
-        final AtomicLong done = new AtomicLong();
-
-        /* 1) contar para la barra */
-        Files.walkFileTree(rootPath, new SimpleFileVisitor<>() {
-            @Override
-            public FileVisitResult visitFile(Path f, BasicFileAttributes a) {
-                total.incrementAndGet();
-                return FileVisitResult.CONTINUE;
-            }
-
-            @Override
-            public FileVisitResult visitFileFailed(Path f, IOException e) {
-                return FileVisitResult.CONTINUE;
-            }
-        });
-
-        /* 2) recorrido real */
         Files.walkFileTree(rootPath, new SimpleFileVisitor<>() {
 
             @Override
             public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes a) {
-                addDirectory(dir);
+                if (isExcluded(dir)) return FileVisitResult.SKIP_SUBTREE;
+
+                ensureLinked(dir);
+                String cat = categoryOfDir(dir);
+                if (cat != null) markAs(cache.get(dir), cat);
                 return FileVisitResult.CONTINUE;
             }
 
             @Override
             public FileVisitResult visitFile(Path file, BasicFileAttributes a) {
-                addFile(file, a.size());
-                updateProgress(done.incrementAndGet(), total.get());
+                processFile(file, a.size());
                 return FileVisitResult.CONTINUE;
             }
 
             @Override
             public FileVisitResult visitFileFailed(Path p, IOException e) {
-                updateProgress(done.incrementAndGet(), total.get());
-                return Files.isDirectory(p) ? FileVisitResult.SKIP_SUBTREE : FileVisitResult.CONTINUE;
-            }
-
-            /* helpers */
-
-            private void addDirectory(Path dir) {
-                if (map.containsKey(dir)) return;
-
-                final FileNode parent = map.get(dir.getParent());
-                final FileNode node = new FileNode(dir.toFile());
-
-                String cat = DIR_TO_CAT.get(dir.getFileName().toString().toLowerCase());
-                if (cat == null) {
-                    final String p = dir.toString().replace('\\', '/').toLowerCase();
-                    if (p.contains("/.gradle/caches") || p.contains("/.m2/repository")) cat = "Carpetas de caché";
-                }
-                if (cat != null) markAs(node, cat);
-
-                parent.getChildren().add(node);
-                map.put(dir, node);
-            }
-
-            private void addFile(Path file, long size) {
-                final FileNode parent = map.get(file.getParent());
-                final FileNode node = new FileNode(file.toFile());
-                node.setSize(size);
-
-                final String name = file.getFileName().toString().toLowerCase();
-
-                String cat = EXT_TO_CAT.get(name); // exact match
-                if (cat == null) {
-                    for (var e : EXT_TO_CAT.entrySet())
-                        if (name.endsWith(e.getKey())) {
-                            cat = e.getValue();
-                            break;
-                        }
-                }
-                if (cat != null) markAs(node, cat);
-
-                parent.getChildren().add(node);
-
-                /* propaga tamaño */
-                for (Path p = file.getParent(); p != null; p = p.getParent()) {
-                    map.get(p).setSize(map.get(p).getSize() + size);
-                    if (p.equals(rootPath)) break;
-                }
+                return (e instanceof AccessDeniedException) ? FileVisitResult.SKIP_SUBTREE : FileVisitResult.CONTINUE;
             }
         });
 
-        /* 3) reglas globales */
-        updateMessage("Post-procesando reglas globales…");
-        postProcess(map);
+        updateMessage("Post‑procesando reglas globales…");
+        postProcess(cache.get(rootPath));
 
-        updateMessage("Escaneo completado");
+        updateMessage("Escaneo completado – " + junkFound.size() + " elementos basura");
         updateProgress(1, 1);
-        return rootNode;
+        return cache.get(rootPath);
     }
 
-    /* ─────────── post-process ─────────── */
+    /* ══════════════════ manejo de ficheros ══════════════════ */
 
-    private void postProcess(Map<Path, FileNode> map) {
-        final int total = map.size();
-        final AtomicInteger done = new AtomicInteger();
-        final List<FileNode> batch = new ArrayList<>();
+    private void processFile(Path file, long size) {
 
-        // Cuántos nodos procesar antes de forzar un update
-        final int chunk = Math.max(1, total / 100);
-        long lastUpdateTime = System.currentTimeMillis();
-
-        for (FileNode n : map.values()) {
-            // ── tus reglas globales ──
-            boolean marked = false;
-            if (!n.isJunk() && n.getFile().isFile() && n.getSize() == 0) {
-                n.setJunk(true);
-                n.setCategory("Archivos vacíos");
-                marked = true;
-            } else if (!n.isJunk() && n.getFile().isDirectory() && n.getChildren().isEmpty()) {
-                n.setJunk(true);
-                n.setCategory("Carpetas vacías");
-                marked = true;
-            } else if (!n.isJunk() && n.getFile().isFile() && n.getFile().getName().toLowerCase().endsWith(".lnk") && !linkTargetExists(n.getFile().toPath())) {
-                n.setJunk(true);
-                n.setCategory("Atajos rotos");
-                marked = true;
-            }
-            if (marked) {
-                batch.add(n);
-            }
-            // ──────────────────────────
-
-            int d = done.incrementAndGet();
-            long now = System.currentTimeMillis();
-
-            // cada 'chunk' nodos o cada 200 ms como mínimo, hago un update
-            if (d % chunk == 0 || now - lastUpdateTime > 200) {
-                // despacha en bloque las notificaciones al UI thread
-                if (!batch.isEmpty()) {
-                    List<FileNode> toNotify = new ArrayList<>(batch);
-                    batch.clear();
-                    Platform.runLater(() -> {
-                        for (FileNode j : toNotify) {
-                            // tu método original de notificación
-                            notifyJunk(j);
-                        }
-                    });
-                }
-
-                updateProgress(d, total);
-                updateMessage(String.format("Post-procesando %d de %d nodos…", d, total));
-                lastUpdateTime = now;
-            }
+        if (isJunkFile(file, size)) {
+            FileNode n = new FileNode(file.toFile());
+            n.setSize(size);
+            markAs(n, categoryOfFile(file, size));   // añade a junkFound
+            cache.put(file, n);
+            ensureLinked(file);
         }
 
-        // flush final de cualquier resto
-        if (!batch.isEmpty()) {
-            List<FileNode> toNotify = new ArrayList<>(batch);
-            Platform.runLater(() -> {
-                for (FileNode j : toNotify) notifyJunk(j);
-            });
+        /* propaga tamaño a ancestros */
+        for (Path p = file.getParent(); p != null; p = p.getParent()) {
+            cache.computeIfAbsent(p, k -> new FileNode(k.toFile())).setSize(cache.get(p).getSize() + size);
+            if (p.equals(rootPath)) break;
         }
-        updateProgress(total, total);
+
+        long d = done.incrementAndGet();
+        if ((d & PROGRESS_MASK) == 0) updateProgress(d, -1);
+        if ((d & PROGRESS_MASK) == 0) updateMessage("Escaneados: " + d + "  |  Basura: " + junkFound.size());
     }
 
-
-    /* ─────────── util ─────────── */
+    /* ══════════════════ batching interno (sólo lista) ══════════════════ */
 
     private void markAs(FileNode n, String cat) {
         n.setJunk(true);
         n.setCategory(cat);
-        notifyJunk(n);
+        junkFound.add(n);
     }
 
-    private void notifyJunk(FileNode n) {
-        if (junkCallback != null) Platform.runLater(() -> junkCallback.accept(n));
+    /* ══════════════════ post‑procesado ══════════════════ */
+
+    private void postProcess(FileNode root) {
+        Deque<FileNode> st = new ArrayDeque<>();
+        st.push(root);
+        while (!st.isEmpty()) {
+            FileNode n = st.pop();
+
+            if (!n.isJunk() && n.getFile().isDirectory() && n.getChildren().isEmpty() && n.getSize() == 0) {
+                markAs(n, "Carpetas vacías");
+            } else if (!n.isJunk() && n.getFile().isFile() && n.getSize() == 0) {
+                markAs(n, "Archivos vacíos");
+            } else if (!n.isJunk() && n.getFile().isFile() && n.getFile().getName().toLowerCase().endsWith(".lnk") && !linkTargetExists(n.getFile().toPath())) {
+                markAs(n, "Atajos rotos");
+            }
+            n.getChildren().forEach(st::push);
+        }
     }
 
-    /**
-     * comprueba destino de .lnk (versión rápida)
-     */
+    /* ══════════════════ helpers ══════════════════ */
+
+    private void ensureLinked(Path child) {
+        Path parentP = child.getParent();
+        if (parentP == null) return;
+        FileNode parent = cache.computeIfAbsent(parentP, k -> new FileNode(k.toFile()));
+        FileNode me = cache.computeIfAbsent(child, k -> new FileNode(k.toFile()));
+        if (!parent.getChildren().contains(me)) parent.getChildren().add(me);
+    }
+
+    private boolean isExcluded(Path p) {
+        String s = p.toString().toLowerCase().replace('\\', '/');
+        return EXCLUDED.stream().anyMatch(s::contains);
+    }
+
+    private boolean isJunkFile(Path p, long size) {
+        String name = p.getFileName().toString().toLowerCase();
+        if (EXT_TO_CAT.containsKey(name)) return true;
+        for (String ext : EXT_TO_CAT.keySet())
+            if (name.endsWith(ext)) return true;
+        if (size == 0) return true;
+        return name.endsWith(".lnk") && !linkTargetExists(p);
+    }
+
+    private String categoryOfFile(Path p, long size) {
+        String name = p.getFileName().toString().toLowerCase();
+        String cat = EXT_TO_CAT.get(name);
+        if (cat == null) for (var e : EXT_TO_CAT.entrySet())
+            if (name.endsWith(e.getKey())) {
+                cat = e.getValue();
+                break;
+            }
+        if (cat == null && size == 0) cat = "Archivos vacíos";
+        if (cat == null && name.endsWith(".lnk")) cat = "Atajos rotos";
+        if (cat == null) cat = "Otros";
+        return cat;
+    }
+
+    private String categoryOfDir(Path dir) {
+        String name = dir.getFileName() == null ? "" : dir.getFileName().toString().toLowerCase();
+        String cat = DIR_TO_CAT.get(name);
+        if (cat == null) {
+            String p = dir.toString().replace('\\', '/').toLowerCase();
+            if (p.contains("/.gradle/caches") || p.contains("/.m2/repository")) cat = "Carpetas de caché";
+        }
+        return cat;
+    }
+
     private boolean linkTargetExists(Path lnk) {
         try {
-            if (Files.size(lnk) == 0) return false;        // vacíos ⇒ rotos
+            if (Files.size(lnk) == 0) return false;
         } catch (IOException ignored) {
             return false;
         }
@@ -240,7 +205,7 @@ public class FileScannerTask extends Task<FileNode> {
             if ((flags & 0x1) == 0) return false;
 
             raf.seek(0x4c);
-            raf.readInt(); // attrs (sin usar)
+            raf.readInt();
 
             raf.seek(0x4 + Short.toUnsignedInt(Short.reverseBytes(raf.readShort())) + 0x18);
             int len = raf.readUnsignedByte();
@@ -248,8 +213,13 @@ public class FileScannerTask extends Task<FileNode> {
 
             byte[] buf = new byte[len];
             raf.readFully(buf);
-            String path = new String(buf);
-            return Files.exists(Path.of(path));
+            String target = new String(buf, StandardCharsets.UTF_8);
+
+            try {
+                return Files.exists(Path.of(target));
+            } catch (InvalidPathException | NullPointerException e) {
+                return false;
+            }
         } catch (IOException e) {
             return false;
         }
