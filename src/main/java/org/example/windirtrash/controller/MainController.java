@@ -23,10 +23,15 @@ import java.io.File;
 import java.nio.file.*;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.*;
+import java.util.stream.Collectors;
 
+/**
+ * Controlador principal (v 2.3)
+ * Añade **Borrar seguro** → elimina en 1 clic todo lo clasificado SAFE.
+ */
 public class MainController {
 
-    /* ────────────────  FXML ──────────────── */
+    /* ──────────────── FXML ─────────────── */
     @FXML
     private TreeView<String> treeView;
     @FXML
@@ -47,24 +52,28 @@ public class MainController {
     private HBox driveBar;
     @FXML
     private HBox topBar;
+    @FXML
+    private Button autoCleanBtn;
 
-    /* índice categoría → TreeItem */
+    /* índice categoría → TreeItem */
     private final Map<String, TreeItem<String>> catItems = new HashMap<>();
 
-    /* ═════════════════════  INIT  ═════════════════════ */
+    /* último resultado de escaneo */
+    private List<FileNode> lastJunk = List.of();
+
+    /* ═════════════════════ INIT ═════════════════════ */
     @FXML
     private void initialize() {
 
         /* selector de unidades */
         driveChoice.getItems().setAll(File.listRoots());
         if (!driveChoice.getItems().isEmpty()) driveChoice.getSelectionModel().selectFirst();
-
         driveChoice.setConverter(new StringConverter<>() {
             @Override
             public String toString(File f) {
                 long free = f.getFreeSpace() / (1024L * 1024 * 1024);
                 long tot = f.getTotalSpace() / (1024L * 1024 * 1024);
-                return String.format("%s  (%d GB libres de %d GB)", f.getPath(), free, tot);
+                return String.format("%s  (%d GB libres de %d GB)", f.getPath(), free, tot);
             }
 
             @Override
@@ -76,10 +85,12 @@ public class MainController {
 
         /* estado inicial */
         progressBar.setVisible(false);
-        statusLabel.setText("Listo.");
         mainSplit.setVisible(false);
+        statusLabel.setText("Listo.");
         placeholderBox.managedProperty().bind(placeholderBox.visibleProperty());
         mainSplit.managedProperty().bind(mainSplit.visibleProperty());
+        autoCleanBtn.setVisible(false);
+        autoCleanBtn.setManaged(false);
 
         /* TreeView con iconos riesgo */
         treeView.setCellFactory(tv -> {
@@ -87,7 +98,6 @@ public class MainController {
             Image warn = new Image(MainApp.class.getResource("/org/example/windirtrash/icons/risk.png").toExternalForm(), 16, 16, true, true);
             ImageView ivOk = new ImageView(ok), ivWarn = new ImageView(warn);
             Tooltip tip = new Tooltip();
-
             return new TreeCell<>() {
                 @Override
                 protected void updateItem(String item, boolean empty) {
@@ -115,20 +125,19 @@ public class MainController {
             };
         });
 
-        /* menú contextual */
+        /* menú contextual TreeView */
         MenuItem miDel = new MenuItem("Eliminar seleccionado");
         MenuItem miCat = new MenuItem("Eliminar categoría completa");
         miDel.setOnAction(e -> deleteSelected(false));
         miCat.setOnAction(e -> deleteSelected(true));
         ContextMenu ctx = new ContextMenu(miDel, miCat);
-
         treeView.setOnMouseClicked(e -> {
             if (e.getButton() == MouseButton.SECONDARY && treeView.getRoot() != null)
                 ctx.show(treeView, e.getScreenX(), e.getScreenY());
             else ctx.hide();
         });
 
-        /* sync tree <-> treemap */
+        /* sync Tree <-> Treemap */
         treemapPane.setOnCategoryClicked(cat -> {
             TreeItem<String> ti = catItems.get(cat);
             if (ti != null) {
@@ -136,7 +145,6 @@ public class MainController {
                 treeView.scrollTo(treeView.getRow(ti));
             }
         });
-
         treeView.getSelectionModel().selectedItemProperty().addListener((ob, o, n) -> {
             if (n == null) {
                 treemapPane.setHighlightCategory(null);
@@ -147,7 +155,7 @@ public class MainController {
         });
     }
 
-    /* ═════════════  Menú  ═════════════ */
+    /* ═══════════ Menú ══════════ */
     @FXML
     private void onSalir() {
         ((Stage) treeView.getScene().getWindow()).close();
@@ -155,42 +163,47 @@ public class MainController {
 
     @FXML
     private void onAcercaDe() {
-        new Alert(Alert.AlertType.INFORMATION, "WinDirTrash v0.1\nDesarrollado por Manito").showAndWait();
+        new Alert(Alert.AlertType.INFORMATION, "WinDirTrash v0.2\nDesarrollado por Manito").showAndWait();
     }
 
-    /* ═════════════  Escanear  ═════════════ */
+    /* ═══════════ ESCANEAR ══════════ */
     @FXML
     private void onEscanear() {
 
         File selDrive = driveChoice.getValue();
         if (selDrive == null) return;
 
+        /* reubica selector en la barra superior 1ª vez */
         if (!topBar.getChildren().contains(driveBar)) {
             placeholderBox.getChildren().remove(driveBar);
-            topBar.getChildren().add(driveBar);
+            topBar.getChildren().add(0, driveBar);
             topBar.setVisible(true);
             topBar.setManaged(true);
         }
 
         if (selDrive.toPath().getParent() == null) {
-            Alert w = new Alert(Alert.AlertType.CONFIRMATION, "Escanear toda la unidad " + selDrive.getPath() + " puede tardar bastante.\n¿Continuar?");
+            var w = new Alert(Alert.AlertType.CONFIRMATION, "Escanear " + selDrive.getPath() + " completo puede tardar.\n¿Continuar?");
             w.getButtonTypes().setAll(ButtonType.OK, ButtonType.CANCEL);
             if (w.showAndWait().orElse(ButtonType.CANCEL) == ButtonType.CANCEL) return;
         }
 
+        /* UI reset */
         placeholderBox.setVisible(false);
         mainSplit.setVisible(true);
         Platform.runLater(() -> mainSplit.setDividerPositions(0.55));
-
         catItems.clear();
         treemapPane.setRoot(null);
         treemapPane.setHighlightCategory(null);
-        TreeItem<String> rootTI = new TreeItem<>("Basura encontrada");
-        rootTI.setExpanded(true);
-        treeView.setRoot(rootTI);
+        treeView.setRoot(new TreeItem<>("Basura encontrada") {
+            {
+                setExpanded(true);
+            }
+        });
         treeView.setShowRoot(false);
+        autoCleanBtn.setVisible(false);
+        autoCleanBtn.setManaged(false);
 
-        /* --- tarea de escaneo --- */
+        /* tarea escaneo */
         FileScannerTask scanTask = new FileScannerTask(selDrive.toPath());
         progressBar.progressProperty().bind(scanTask.progressProperty());
         statusLabel.textProperty().bind(scanTask.messageProperty());
@@ -198,41 +211,44 @@ public class MainController {
 
         scanTask.setOnSucceeded(ev -> {
             FileNode root = scanTask.getValue();
-            List<FileNode> junk = scanTask.getJunkFound();
+            lastJunk = scanTask.getJunkFound();
 
             progressBar.progressProperty().unbind();
             statusLabel.textProperty().unbind();
             statusLabel.setText("Construyendo vista…");
             progressBar.setProgress(ProgressBar.INDETERMINATE_PROGRESS);
 
-            Task<Void> paintTask = new Task<>() {
+            /* pintar TreeView por lotes */
+            Task<Void> paint = new Task<>() {
                 @Override
                 protected Void call() throws Exception {
                     final int BATCH = 25;
-                    for (int i = 0; i < junk.size(); i += BATCH) {
-                        int end = Math.min(i + BATCH, junk.size());
-                        final List<FileNode> batch = List.copyOf(junk.subList(i, end));
-                        Platform.runLater(() -> batch.forEach(MainController.this::addJunkToUI));
-                        updateProgress(end, junk.size());
+                    for (int i = 0; i < lastJunk.size(); i += BATCH) {
+                        int end = Math.min(i + BATCH, lastJunk.size());
+                        var slice = List.copyOf(lastJunk.subList(i, end));
+                        Platform.runLater(() -> slice.forEach(MainController.this::addJunkToUI));
+                        updateProgress(end, lastJunk.size());
                         Thread.sleep(8);
                     }
                     return null;
                 }
             };
-            progressBar.progressProperty().bind(paintTask.progressProperty());
-
-            paintTask.setOnSucceeded(e2 -> {
+            progressBar.progressProperty().bind(paint.progressProperty());
+            paint.setOnSucceeded(e2 -> {
                 progressBar.setVisible(false);
                 statusLabel.setText("Listo.");
                 treemapPane.setRoot(root);
-            });
-            paintTask.setOnFailed(e2 -> {
-                progressBar.setVisible(false);
-                statusLabel.setText("Error vista: " + paintTask.getException().getMessage());
-            });
-            new Thread(paintTask, "paint-ui").start();
-        });
 
+                boolean hasSafe = lastJunk.stream().anyMatch(fn -> CategoryInfo.get(fn.getCategory()).risk() == CategoryInfo.Risk.SAFE);
+                autoCleanBtn.setVisible(hasSafe);
+                autoCleanBtn.setManaged(hasSafe);
+            });
+            paint.setOnFailed(e2 -> {
+                progressBar.setVisible(false);
+                statusLabel.setText("Error vista: " + paint.getException().getMessage());
+            });
+            new Thread(paint, "paint-ui").start();
+        });
         scanTask.setOnFailed(ev -> {
             progressBar.setVisible(false);
             statusLabel.textProperty().unbind();
@@ -241,16 +257,55 @@ public class MainController {
         new Thread(scanTask, "scan").start();
     }
 
-    /* ═════════════  Árbol incremental  ═════════════ */
+    /* ═══════════ AUTO‑CLEAN ══════════ */
+    @FXML
+    private void onBorrarSeguro() {
+
+        List<Path> safeTargets = lastJunk.stream().filter(fn -> CategoryInfo.get(fn.getCategory()).risk() == CategoryInfo.Risk.SAFE).map(fn -> fn.getFile().toPath()).distinct().collect(Collectors.toList());
+
+        if (safeTargets.isEmpty()) {
+            statusLabel.setText("Nada que borrar automáticamente.");
+            return;
+        }
+
+        Alert conf = new Alert(Alert.AlertType.CONFIRMATION, "Se eliminarán " + safeTargets.size() + " elementos seguros.\n¿Continuar?");
+        conf.getButtonTypes().setAll(ButtonType.OK, ButtonType.CANCEL);
+        if (conf.showAndWait().orElse(ButtonType.CANCEL) == ButtonType.CANCEL) return;
+
+        runAutoDeleteTask(safeTargets);
+    }
+
+    private void runAutoDeleteTask(List<Path> tgt) {
+        DeleteTask d = new DeleteTask(tgt, false);   // eliminación permanente (sin pape‑ lera)
+        progressBar.progressProperty().bind(d.progressProperty());
+        statusLabel.textProperty().bind(d.messageProperty());
+        progressBar.setVisible(true);
+
+        d.setOnSucceeded(ev -> {
+            progressBar.setVisible(false);
+            progressBar.progressProperty().unbind();
+            statusLabel.textProperty().unbind();
+            statusLabel.setText("Auto‑limpieza completada.");
+            autoCleanBtn.setVisible(false);
+            autoCleanBtn.setManaged(false);
+            onEscanear();                    // refresca vista con un nuevo escaneo rápido
+        });
+        d.setOnFailed(ev -> {
+            progressBar.setVisible(false);
+            statusLabel.textProperty().unbind();
+            statusLabel.setText("Error auto‑limpieza: " + d.getException().getMessage());
+        });
+        new Thread(d, "auto-clean").start();
+    }
+
+    /* ═══════════ Árbol incremental ══════════ */
     private void addJunkToUI(FileNode n) {
         String cat = n.getCategory() == null ? "Otros" : n.getCategory();
-
         TreeItem<String> catItem = catItems.computeIfAbsent(cat, c -> {
             TreeItem<String> ti = new TreeItem<>(c);
             treeView.getRoot().getChildren().add(ti);
             return ti;
         });
-
         String label = n.getFile().getAbsolutePath() + " (" + FileNode.convertToHumanReadable(n.getSize()) + ')';
         catItem.getChildren().add(new TreeItem<>(label));
 
@@ -258,7 +313,7 @@ public class MainController {
         catItem.setValue(cat + " (" + FileNode.convertToHumanReadable(total) + ')');
     }
 
-    /* ═════════════  Eliminar  ═════════════ */
+    /* ═══════════ Borrado manual (menú) ══════════ */
     @FXML
     private void onLimpiar() {
         deleteSelected(false);
@@ -280,7 +335,7 @@ public class MainController {
         boolean review = CategoryInfo.get(cat).risk() == CategoryInfo.Risk.REVIEW;
 
         Alert dlg = new Alert(Alert.AlertType.CONFIRMATION);
-        dlg.setHeaderText(review ? "⚠️ Algunos elementos conviene revisarlos." : "✅ Elementos seguros de borrar.");
+        dlg.setHeaderText(review ? "⚠️ Revisa antes de borrar." : "✅ Seguro de borrar.");
         dlg.setContentText("Mover a Papelera permite recuperar.\nEliminar borra definitivamente.");
         ButtonType btTrash = new ButtonType("Mover a Papelera"), btDel = new ButtonType("Eliminar");
         dlg.getButtonTypes().setAll(btTrash, btDel, ButtonType.CANCEL);
@@ -288,36 +343,34 @@ public class MainController {
         if (choice == ButtonType.CANCEL) return;
 
         boolean toTrash = (choice == btTrash);
-        boolean trashOK = Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.MOVE_TO_TRASH);
-        if (toTrash && !trashOK) {
-            Alert w = new Alert(Alert.AlertType.WARNING, "Tu sistema no soporta la Papelera.\nSe usará eliminación permanente.", ButtonType.OK, ButtonType.CANCEL);
+        if (toTrash && !(Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.MOVE_TO_TRASH))) {
+            Alert w = new Alert(Alert.AlertType.WARNING, "Tu sistema no soporta la Papelera.\nSe aplicará borrado permanente.", ButtonType.OK, ButtonType.CANCEL);
             if (w.showAndWait().orElse(ButtonType.CANCEL) == ButtonType.CANCEL) return;
             toTrash = false;
         }
         runDeleteTask(tgt, toTrash, sel, wholeCat);
     }
 
-    /* tarea de borrado */
+    /* tarea de borrado manual */
     private void runDeleteTask(List<Path> tgt, boolean toTrash, TreeItem<String> sel, boolean wholeCat) {
-
-        DeleteTask delTask = new DeleteTask(tgt, toTrash);
-        progressBar.progressProperty().bind(delTask.progressProperty());
-        statusLabel.textProperty().bind(delTask.messageProperty());
+        DeleteTask dt = new DeleteTask(tgt, toTrash);
+        progressBar.progressProperty().bind(dt.progressProperty());
+        statusLabel.textProperty().bind(dt.messageProperty());
         progressBar.setVisible(true);
 
-        delTask.setOnSucceeded(ev -> {
+        dt.setOnSucceeded(ev -> {
             progressBar.setVisible(false);
             progressBar.progressProperty().unbind();
             statusLabel.textProperty().unbind();
-            statusLabel.setText(delTask.getMessage());
+            statusLabel.setText(dt.getMessage());
             Platform.runLater(() -> removeNodesFromTree(sel, wholeCat));
         });
-        delTask.setOnFailed(ev -> {
+        dt.setOnFailed(ev -> {
             progressBar.setVisible(false);
             statusLabel.textProperty().unbind();
-            statusLabel.setText("Error al eliminar: " + delTask.getException().getMessage());
+            statusLabel.setText("Error al eliminar: " + dt.getException().getMessage());
         });
-        new Thread(delTask, "delete").start();
+        new Thread(dt, "delete").start();
     }
 
     private void removeNodesFromTree(TreeItem<String> sel, boolean wholeCat) {
@@ -337,10 +390,12 @@ public class MainController {
             placeholderBox.getChildren().add(driveBar);
             topBar.setVisible(false);
             topBar.setManaged(false);
+            autoCleanBtn.setVisible(false);
+            autoCleanBtn.setManaged(false);
         }
     }
 
-    /* ═════════════  util  ═════════════ */
+    /* ═══════════ UTIL ══════════ */
     private static Path extractPath(String disp) {
         int i = disp.lastIndexOf(" (");
         return Paths.get((i < 0 ? disp : disp.substring(0, i)).trim());

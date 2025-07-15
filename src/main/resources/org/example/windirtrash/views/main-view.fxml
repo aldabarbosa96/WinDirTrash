@@ -40,6 +40,13 @@
                 <padding>
                     <Insets top="8" right="8" bottom="4" left="8"/>
                 </padding>
+
+                <!-- botón de limpieza segura (se activa tras el escaneo) -->
+                <Button fx:id="autoCleanBtn"
+                        text="Borrar seguro"
+                        visible="false"
+                        managed="false"
+                        onAction="#onBorrarSeguro"/>
             </HBox>
 
             <StackPane VBox.vgrow="ALWAYS">
@@ -47,6 +54,7 @@
                 <!-- Placeholder inicial con selector centrado -->
                 <VBox fx:id="placeholderBox" alignment="CENTER" spacing="16">
                     <Label text="Selecciona la unidad y pulsa Escanear"/>
+
                     <!--  Esta barra se reubica en topBar al iniciar el escaneo -->
                     <HBox fx:id="driveBar" spacing="8" alignment="CENTER">
                         <Label text="Unidad:"/>
