@@ -21,17 +21,11 @@ import org.example.windirtrash.view.TreemapPane;
 import java.awt.Desktop;
 import java.io.File;
 import java.nio.file.*;
-import java.nio.file.attribute.BasicFileAttributes;
 import java.util.*;
 import java.util.stream.Collectors;
 
-/**
- * Controlador principal (v 2.3)
- * Añade **Borrar seguro** → elimina en 1 clic todo lo clasificado SAFE.
- */
 public class MainController {
 
-    /* ──────────────── FXML ─────────────── */
     @FXML
     private TreeView<String> treeView;
     @FXML
@@ -55,13 +49,9 @@ public class MainController {
     @FXML
     private Button autoCleanBtn;
 
-    /* índice categoría → TreeItem */
     private final Map<String, TreeItem<String>> catItems = new HashMap<>();
-
-    /* último resultado de escaneo */
     private List<FileNode> lastJunk = List.of();
 
-    /* ═════════════════════ INIT ═════════════════════ */
     @FXML
     private void initialize() {
 
@@ -137,7 +127,6 @@ public class MainController {
             else ctx.hide();
         });
 
-        /* sync Tree <-> Treemap */
         treemapPane.setOnCategoryClicked(cat -> {
             TreeItem<String> ti = catItems.get(cat);
             if (ti != null) {
@@ -155,7 +144,6 @@ public class MainController {
         });
     }
 
-    /* ═══════════ Menú ══════════ */
     @FXML
     private void onSalir() {
         ((Stage) treeView.getScene().getWindow()).close();
@@ -166,7 +154,6 @@ public class MainController {
         new Alert(Alert.AlertType.INFORMATION, "WinDirTrash v0.2\nDesarrollado por Manito").showAndWait();
     }
 
-    /* ═══════════ ESCANEAR ══════════ */
     @FXML
     private void onEscanear() {
 
@@ -257,7 +244,7 @@ public class MainController {
         new Thread(scanTask, "scan").start();
     }
 
-    /* ═══════════ AUTO‑CLEAN ══════════ */
+
     @FXML
     private void onBorrarSeguro() {
 
@@ -298,7 +285,6 @@ public class MainController {
         new Thread(d, "auto-clean").start();
     }
 
-    /* ═══════════ Árbol incremental ══════════ */
     private void addJunkToUI(FileNode n) {
         String cat = n.getCategory() == null ? "Otros" : n.getCategory();
         TreeItem<String> catItem = catItems.computeIfAbsent(cat, c -> {
@@ -313,7 +299,6 @@ public class MainController {
         catItem.setValue(cat + " (" + FileNode.convertToHumanReadable(total) + ')');
     }
 
-    /* ═══════════ Borrado manual (menú) ══════════ */
     @FXML
     private void onLimpiar() {
         deleteSelected(false);
@@ -351,7 +336,6 @@ public class MainController {
         runDeleteTask(tgt, toTrash, sel, wholeCat);
     }
 
-    /* tarea de borrado manual */
     private void runDeleteTask(List<Path> tgt, boolean toTrash, TreeItem<String> sel, boolean wholeCat) {
         DeleteTask dt = new DeleteTask(tgt, toTrash);
         progressBar.progressProperty().bind(dt.progressProperty());
@@ -395,7 +379,7 @@ public class MainController {
         }
     }
 
-    /* ═══════════ UTIL ══════════ */
+
     private static Path extractPath(String disp) {
         int i = disp.lastIndexOf(" (");
         return Paths.get((i < 0 ? disp : disp.substring(0, i)).trim());
