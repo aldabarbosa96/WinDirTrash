@@ -36,3 +36,23 @@ build/
 
 ### Mac OS ###
 .DS_Store
+
+# JavaFX runtime personalizado
+custom-runtime/
+
+# Archivos nativos y ejecutables
+*.dll
+*.exe
+
+# Archivos de logs
+*.log
+
+# Archivos temporales o de backup
+*.tmp
+*.bak
+
+# Manifest manual
+src/main/resources/META-INF/MANIFEST.MF
+
+.idea/misc.xml
+.idea/artifacts/

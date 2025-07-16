@@ -20,7 +20,7 @@ import org.example.windirtrash.view.TreemapPane;
 
 import java.awt.Desktop;
 import java.io.File;
-import java.nio.file.*;
+import java.nio.file.Path;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -54,16 +54,17 @@ public class MainController {
 
     @FXML
     private void initialize() {
-
-        /* selector de unidades */
+        // Selector de unidades
         driveChoice.getItems().setAll(File.listRoots());
-        if (!driveChoice.getItems().isEmpty()) driveChoice.getSelectionModel().selectFirst();
+        if (!driveChoice.getItems().isEmpty()) {
+            driveChoice.getSelectionModel().selectFirst();
+        }
         driveChoice.setConverter(new StringConverter<>() {
             @Override
             public String toString(File f) {
                 long free = f.getFreeSpace() / (1024L * 1024 * 1024);
                 long tot = f.getTotalSpace() / (1024L * 1024 * 1024);
-                return String.format("%s  (%d GB libres de %d GB)", f.getPath(), free, tot);
+                return String.format("%s  (%d GB libres de %d GB)", f.getPath(), free, tot);
             }
 
             @Override
@@ -73,7 +74,7 @@ public class MainController {
         });
         scanBtn.disableProperty().bind(driveChoice.getSelectionModel().selectedItemProperty().isNull());
 
-        /* estado inicial */
+        // Estado inicial
         progressBar.setVisible(false);
         mainSplit.setVisible(false);
         statusLabel.setText("Listo.");
@@ -82,7 +83,7 @@ public class MainController {
         autoCleanBtn.setVisible(false);
         autoCleanBtn.setManaged(false);
 
-        /* TreeView con iconos riesgo */
+        // TreeView con iconos de riesgo
         treeView.setCellFactory(tv -> {
             Image ok = new Image(MainApp.class.getResource("/org/example/windirtrash/icons/good.png").toExternalForm(), 16, 16, true, true);
             Image warn = new Image(MainApp.class.getResource("/org/example/windirtrash/icons/risk.png").toExternalForm(), 16, 16, true, true);
@@ -115,18 +116,21 @@ public class MainController {
             };
         });
 
-        /* menú contextual TreeView */
+        // Menú contextual en TreeView
         MenuItem miDel = new MenuItem("Eliminar seleccionado");
         MenuItem miCat = new MenuItem("Eliminar categoría completa");
         miDel.setOnAction(e -> deleteSelected(false));
         miCat.setOnAction(e -> deleteSelected(true));
         ContextMenu ctx = new ContextMenu(miDel, miCat);
         treeView.setOnMouseClicked(e -> {
-            if (e.getButton() == MouseButton.SECONDARY && treeView.getRoot() != null)
+            if (e.getButton() == MouseButton.SECONDARY && treeView.getRoot() != null) {
                 ctx.show(treeView, e.getScreenX(), e.getScreenY());
-            else ctx.hide();
+            } else {
+                ctx.hide();
+            }
         });
 
+        // Sincronía Treemap ↔ TreeView
         treemapPane.setOnCategoryClicked(cat -> {
             TreeItem<String> ti = catItems.get(cat);
             if (ti != null) {
@@ -137,10 +141,10 @@ public class MainController {
         treeView.getSelectionModel().selectedItemProperty().addListener((ob, o, n) -> {
             if (n == null) {
                 treemapPane.setHighlightCategory(null);
-                return;
+            } else {
+                String cat = n.isLeaf() ? n.getParent().getValue().split(" \\(")[0] : n.getValue().split(" \\(")[0];
+                treemapPane.setHighlightCategory(cat);
             }
-            String cat = n.isLeaf() ? n.getParent().getValue().split(" \\(")[0] : n.getValue().split(" \\(")[0];
-            treemapPane.setHighlightCategory(cat);
         });
     }
 
@@ -156,11 +160,10 @@ public class MainController {
 
     @FXML
     private void onEscanear() {
-
         File selDrive = driveChoice.getValue();
         if (selDrive == null) return;
 
-        /* reubica selector en la barra superior 1ª vez */
+        // Reubica selector en la barra superior la primera vez
         if (!topBar.getChildren().contains(driveBar)) {
             placeholderBox.getChildren().remove(driveBar);
             topBar.getChildren().add(0, driveBar);
@@ -168,29 +171,28 @@ public class MainController {
             topBar.setManaged(true);
         }
 
+        // Confirmación si es raíz
         if (selDrive.toPath().getParent() == null) {
             var w = new Alert(Alert.AlertType.CONFIRMATION, "Escanear " + selDrive.getPath() + " completo puede tardar.\n¿Continuar?");
             w.getButtonTypes().setAll(ButtonType.OK, ButtonType.CANCEL);
             if (w.showAndWait().orElse(ButtonType.CANCEL) == ButtonType.CANCEL) return;
         }
 
-        /* UI reset */
+        // Reset UI
         placeholderBox.setVisible(false);
         mainSplit.setVisible(true);
         Platform.runLater(() -> mainSplit.setDividerPositions(0.55));
         catItems.clear();
         treemapPane.setRoot(null);
         treemapPane.setHighlightCategory(null);
-        treeView.setRoot(new TreeItem<>("Basura encontrada") {
-            {
-                setExpanded(true);
-            }
-        });
+        treeView.setRoot(new TreeItem<>("Basura encontrada") {{
+            setExpanded(true);
+        }});
         treeView.setShowRoot(false);
         autoCleanBtn.setVisible(false);
         autoCleanBtn.setManaged(false);
 
-        /* tarea escaneo */
+        // Tarea de escaneo
         FileScannerTask scanTask = new FileScannerTask(selDrive.toPath());
         progressBar.progressProperty().bind(scanTask.progressProperty());
         statusLabel.textProperty().bind(scanTask.messageProperty());
@@ -205,7 +207,7 @@ public class MainController {
             statusLabel.setText("Construyendo vista…");
             progressBar.setProgress(ProgressBar.INDETERMINATE_PROGRESS);
 
-            /* pintar TreeView por lotes */
+            // Pintado por lotes
             Task<Void> paint = new Task<>() {
                 @Override
                 protected Void call() throws Exception {
@@ -236,34 +238,46 @@ public class MainController {
             });
             new Thread(paint, "paint-ui").start();
         });
+
         scanTask.setOnFailed(ev -> {
             progressBar.setVisible(false);
             statusLabel.textProperty().unbind();
             statusLabel.setText("Error: " + scanTask.getException().getMessage());
         });
+
         new Thread(scanTask, "scan").start();
     }
 
-
+    /**
+     * Borrado seguro: muestra número de elementos y espacio liberado antes de confirmar.
+     */
     @FXML
     private void onBorrarSeguro() {
+        var safeNodes = lastJunk.stream().filter(fn -> CategoryInfo.get(fn.getCategory()).risk() == CategoryInfo.Risk.SAFE).collect(Collectors.toList());
 
-        List<Path> safeTargets = lastJunk.stream().filter(fn -> CategoryInfo.get(fn.getCategory()).risk() == CategoryInfo.Risk.SAFE).map(fn -> fn.getFile().toPath()).distinct().collect(Collectors.toList());
-
-        if (safeTargets.isEmpty()) {
+        if (safeNodes.isEmpty()) {
             statusLabel.setText("Nada que borrar automáticamente.");
             return;
         }
 
-        Alert conf = new Alert(Alert.AlertType.CONFIRMATION, "Se eliminarán " + safeTargets.size() + " elementos seguros.\n¿Continuar?");
-        conf.getButtonTypes().setAll(ButtonType.OK, ButtonType.CANCEL);
-        if (conf.showAndWait().orElse(ButtonType.CANCEL) == ButtonType.CANCEL) return;
+        int count = safeNodes.size();
+        long totalBytes = safeNodes.stream().mapToLong(FileNode::getSize).sum();
+        String humanSize = FileNode.convertToHumanReadable(totalBytes);
 
-        runAutoDeleteTask(safeTargets);
+        Alert conf = new Alert(Alert.AlertType.CONFIRMATION);
+        conf.setHeaderText("Auto‑limpieza segura");
+        conf.setContentText(String.format("Se eliminarán %d elementos seguros\n– liberando %s de espacio.\n¿Continuar?", count, humanSize));
+        conf.getButtonTypes().setAll(ButtonType.OK, ButtonType.CANCEL);
+        if (conf.showAndWait().orElse(ButtonType.CANCEL) == ButtonType.CANCEL) {
+            return;
+        }
+
+        var safePaths = safeNodes.stream().map(fn -> fn.getFile().toPath()).distinct().collect(Collectors.toList());
+        runAutoDeleteTask(safePaths);
     }
 
     private void runAutoDeleteTask(List<Path> tgt) {
-        DeleteTask d = new DeleteTask(tgt, false);   // eliminación permanente (sin pape‑ lera)
+        DeleteTask d = new DeleteTask(tgt, false);
         progressBar.progressProperty().bind(d.progressProperty());
         statusLabel.textProperty().bind(d.messageProperty());
         progressBar.setVisible(true);
@@ -275,7 +289,7 @@ public class MainController {
             statusLabel.setText("Auto‑limpieza completada.");
             autoCleanBtn.setVisible(false);
             autoCleanBtn.setManaged(false);
-            onEscanear();                    // refresca vista con un nuevo escaneo rápido
+            onEscanear();  // refresca la vista
         });
         d.setOnFailed(ev -> {
             progressBar.setVisible(false);
@@ -288,10 +302,11 @@ public class MainController {
     private void addJunkToUI(FileNode n) {
         String cat = n.getCategory() == null ? "Otros" : n.getCategory();
         TreeItem<String> catItem = catItems.computeIfAbsent(cat, c -> {
-            TreeItem<String> ti = new TreeItem<>(c);
+            var ti = new TreeItem<String>(c);
             treeView.getRoot().getChildren().add(ti);
             return ti;
         });
+
         String label = n.getFile().getAbsolutePath() + " (" + FileNode.convertToHumanReadable(n.getSize()) + ')';
         catItem.getChildren().add(new TreeItem<>(label));
 
@@ -309,9 +324,11 @@ public class MainController {
         if (sel == null) return;
 
         List<Path> tgt = new ArrayList<>();
-        if (wholeCat && !sel.isLeaf()) sel.getChildren().forEach(c -> tgt.add(extractPath(c.getValue())));
-        else if (sel.isLeaf()) tgt.add(extractPath(sel.getValue()));
-        else {
+        if (wholeCat && !sel.isLeaf()) {
+            sel.getChildren().forEach(c -> tgt.add(extractPath(c.getValue())));
+        } else if (sel.isLeaf()) {
+            tgt.add(extractPath(sel.getValue()));
+        } else {
             statusLabel.setText("Selecciona un archivo o categoría.");
             return;
         }
@@ -322,8 +339,10 @@ public class MainController {
         Alert dlg = new Alert(Alert.AlertType.CONFIRMATION);
         dlg.setHeaderText(review ? "⚠️ Revisa antes de borrar." : "✅ Seguro de borrar.");
         dlg.setContentText("Mover a Papelera permite recuperar.\nEliminar borra definitivamente.");
-        ButtonType btTrash = new ButtonType("Mover a Papelera"), btDel = new ButtonType("Eliminar");
+        ButtonType btTrash = new ButtonType("Mover a Papelera");
+        ButtonType btDel = new ButtonType("Eliminar");
         dlg.getButtonTypes().setAll(btTrash, btDel, ButtonType.CANCEL);
+
         ButtonType choice = dlg.showAndWait().orElse(ButtonType.CANCEL);
         if (choice == ButtonType.CANCEL) return;
 
@@ -333,6 +352,7 @@ public class MainController {
             if (w.showAndWait().orElse(ButtonType.CANCEL) == ButtonType.CANCEL) return;
             toTrash = false;
         }
+
         runDeleteTask(tgt, toTrash, sel, wholeCat);
     }
 
@@ -358,12 +378,14 @@ public class MainController {
     }
 
     private void removeNodesFromTree(TreeItem<String> sel, boolean wholeCat) {
-        if (wholeCat && !sel.isLeaf()) sel.getParent().getChildren().remove(sel);
-        else {
+        if (wholeCat && !sel.isLeaf()) {
+            sel.getParent().getChildren().remove(sel);
+        } else {
             TreeItem<String> parent = sel.getParent();
             parent.getChildren().remove(sel);
-            if (parent.getChildren().isEmpty() && parent.getParent() != null)
+            if (parent.getChildren().isEmpty() && parent.getParent() != null) {
                 parent.getParent().getChildren().remove(parent);
+            }
         }
         if (treeView.getRoot() != null && treeView.getRoot().getChildren().isEmpty()) {
             treeView.setRoot(null);
@@ -379,10 +401,9 @@ public class MainController {
         }
     }
 
-
     private static Path extractPath(String disp) {
         int i = disp.lastIndexOf(" (");
-        return Paths.get((i < 0 ? disp : disp.substring(0, i)).trim());
+        return Path.of((i < 0 ? disp : disp.substring(0, i)).trim());
     }
 
     private long bytesFromDisplay(String d) {

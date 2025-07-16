@@ -33,7 +33,7 @@ public final class CategoryInfo {
             Map.entry("Carpetas vacías",
                     new Meta("Directorios sin contenido.", Risk.SAFE)),
             Map.entry("Atajos rotos",
-                    new Meta("Accesos directos cuyos destinos ya no existen.", Risk.SAFE)),
+                    new Meta("Accesos directos cuyos destinos ya no existen.", Risk.REVIEW)),  // <-- ahora REVIEW
             Map.entry("Otros",
                     new Meta("Archivos que no encajan en las categorías anteriores.", Risk.REVIEW))
     );
